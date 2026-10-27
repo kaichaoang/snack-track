@@ -40,6 +40,7 @@ const KEYS = {
   // Not part of exportAll(), so backups never contain the key.
   geminiKey: "snacktrack.geminiKey.v1",
   geminiModel: "snacktrack.geminiModel.v1",
+  geminiModels: "snacktrack.geminiModels.v1",
 } as const;
 
 // Earlier versions stored an Anthropic API key; remove it if present.
@@ -129,6 +130,13 @@ export function useGeminiKey() {
 
 export function useGeminiModel() {
   return useStored<string>(KEYS.geminiModel, "");
+}
+
+const NO_MODELS: string[] = [];
+
+/** Models the key can use, best first; used as fallbacks when one is busy. */
+export function useGeminiModels() {
+  return useStored<string[]>(KEYS.geminiModels, NO_MODELS);
 }
 
 export function newId(): string {

@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { listModels } from "@/lib/gemini";
-import { useGeminiKey, useGeminiModel } from "@/lib/store";
+import { useGeminiKey, useGeminiModel, useGeminiModels } from "@/lib/store";
 
 export function GeminiCard() {
   const [key, setKey] = useGeminiKey();
   const [model, setModel] = useGeminiModel();
+  const [savedModels, setSavedModels] = useGeminiModels();
   const [draft, setDraft] = useState("");
   const [models, setModels] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -20,6 +21,7 @@ export function GeminiCard() {
       if (found.length === 0) throw new Error("No usable Gemini models found for this key.");
       setKey(k);
       setModels(found);
+      setSavedModels(found);
       if (!model || !found.includes(model)) setModel(found[0]);
       setDraft("");
     } catch (e) {
@@ -37,7 +39,7 @@ export function GeminiCard() {
         (no card needed) at{" "}
         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>. The key
         is saved only in this browser and not included in backups. On the free tier Google may use what you send to improve
-        its products.
+        its products. Some free keys have no web-search allowance; the app then estimates without searching and says so.
       </p>
 
       {key ? (
@@ -49,6 +51,7 @@ export function GeminiCard() {
               onClick={() => {
                 setKey("");
                 setModels(null);
+                setSavedModels([]);
               }}
             >
               Remove

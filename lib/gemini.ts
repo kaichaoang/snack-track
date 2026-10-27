@@ -22,6 +22,10 @@ export interface AiEstimate {
   notes: string;
   items: AiItem[];
   sources: Source[];
+  /** False when the estimate was made without web search. */
+  searched: boolean;
+  /** The model that answered (worth trying first next time). */
+  model: string;
 }
 
 export interface Photo {
@@ -55,7 +59,7 @@ async function apiError(res: Response): Promise<Error> {
   if (res.status === 400 && /api key/i.test(detail)) return new Error("Your Gemini API key was rejected. Check it in the Goals tab.");
   if (res.status === 403) return new Error("This Gemini key isn't allowed to use that model. Pick another model in the Goals tab.");
   if (res.status === 404) return new Error("That Gemini model isn't available. Pick another model in the Goals tab.");
-  if (res.status === 429) return new Error("Gemini's free limit is used up for now. Try again later, or use the offline estimate.");
+  if (res.status === 429) return new Error("Gemini's free limit is used up for now. Try again later, or log the offline estimate.");
   return new Error(`Gemini error (${res.status})${detail ? `: ${detail}` : ""}`);
 }
 
@@ -93,7 +97,7 @@ function num(v: unknown): number {
 }
 
 /** Pulls the JSON object out of the model's reply (tolerates ```json fences or stray text). */
-export function parseEstimate(text: string): Omit<AiEstimate, "sources"> {
+export function parseEstimate(text: string): Omit<AiEstimate, "sources" | "searched" | "model"> {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("Gemini didn't return an estimate. Try rephrasing.");
@@ -133,11 +137,56 @@ interface GenerateResponse {
   promptFeedback?: { blockReason?: string };
 }
 
+const REQUEST_TIMEOUT_MS = 30_000;
+
+// Set when the key's project has no Google Search allowance (common on
+// free-tier keys), so later requests skip straight to the plain call.
+let searchUnavailable = false;
+
+class GeminiHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, err: Error) {
+    super(err.message);
+    this.status = status;
+  }
+}
+
+async function generate(key: string, model: string, parts: Record<string, unknown>[], withSearch: boolean): Promise<GenerateResponse> {
+  const system = withSearch
+    ? SYSTEM
+    : `${SYSTEM}\n\nWeb search is not available for this request: use your own knowledge of published restaurant and food-composition figures, and say in notes that figures were not checked online.`;
+  let res: Response;
+  try {
+    res = await fetch(`${API}/models/${encodeURIComponent(model)}:generateContent`, {
+      method: "POST",
+      headers: headers(key),
+      // Overloaded models sometimes hang instead of returning 503.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts }],
+        ...(withSearch ? { tools: [{ google_search: {} }] } : {}),
+      }),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") throw new GeminiHttpError(504, new Error("Gemini took too long."));
+    throw new Error("Couldn't reach Gemini. Check your connection.");
+  }
+  if (!res.ok) throw new GeminiHttpError(res.status, await apiError(res));
+  return (await res.json()) as GenerateResponse;
+}
+
+/**
+ * Tries `model` with web search, then without search if the key has no
+ * search allowance, then the next models in `fallbacks` if a model is busy,
+ * slow, retired or has no free quota.
+ */
 export async function estimateWithGemini(
   key: string,
   model: string,
   description: string,
   photo?: Photo,
+  fallbacks: string[] = [],
 ): Promise<AiEstimate> {
   if (!key) throw new Error("Add your free Gemini API key in the Goals tab first.");
   const parts: Record<string, unknown>[] = [];
@@ -148,23 +197,40 @@ export async function estimateWithGemini(
       : "Estimate the meal in the photo.",
   });
 
-  let res: Response;
-  try {
-    res = await fetch(`${API}/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: headers(key),
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: SYSTEM }] },
-        contents: [{ role: "user", parts }],
-        tools: [{ google_search: {} }],
-      }),
-    });
-  } catch {
-    throw new Error("Couldn't reach Gemini. Check your connection.");
-  }
-  if (!res.ok) throw await apiError(res);
+  const models = [model, ...fallbacks.filter((m) => m !== model && /flash/.test(m))].slice(0, 8);
+  let lastError: Error = new Error("Gemini is unavailable right now. Try again in a minute.");
+  let body: GenerateResponse | null = null;
+  let searched = false;
+  let used = model;
 
-  const body = (await res.json()) as GenerateResponse;
+  for (const m of models) {
+    used = m;
+    try {
+      if (!searchUnavailable) {
+        try {
+          body = await generate(key, m, parts, true);
+          searched = true;
+          break;
+        } catch (e) {
+          if (!(e instanceof GeminiHttpError && e.status === 429)) throw e;
+          // Search quota is zero/used up: carry on without it.
+          searchUnavailable = true;
+        }
+      }
+      body = await generate(key, m, parts, false);
+      break;
+    } catch (e) {
+      lastError = e instanceof Error ? e : lastError;
+      // Busy, slow, retired or no free quota on this model: try the next one.
+      if (!(e instanceof GeminiHttpError && [404, 429, 500, 503, 504].includes(e.status))) throw lastError;
+    }
+  }
+  if (!body) {
+    throw lastError instanceof GeminiHttpError && lastError.status !== 404
+      ? new Error("Gemini's free models are busy or at their limit right now. Try again in a minute, or log the offline estimate.")
+      : lastError;
+  }
+
   if (body.promptFeedback?.blockReason) throw new Error("Gemini declined this request. Try describing the meal differently.");
   const cand = body.candidates?.[0];
   const text = (cand?.content?.parts ?? [])
@@ -177,5 +243,5 @@ export async function estimateWithGemini(
     if (c.web?.uri) sources.set(c.web.uri, { title: c.web.title ?? c.web.uri, url: c.web.uri });
   }
 
-  return { ...parseEstimate(text), sources: [...sources.values()].slice(0, 6) };
+  return { ...parseEstimate(text), sources: [...sources.values()].slice(0, 6), searched, model: used };
 }

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
-import { defaultMealSlot, MEAL_SLOTS, newId, useGeminiKey, useGeminiModel, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
+import { defaultMealSlot, MEAL_SLOTS, newId, useGeminiKey, useGeminiModel, useGeminiModels, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
 import { estimateWithGemini, type AiEstimate, type AiItem } from "@/lib/gemini";
 import { resizeImage } from "@/lib/image";
 import { searchFoods, type FoodResult } from "@/lib/foods";
@@ -191,7 +191,8 @@ function DescribePanel({
   onOpenSettings: () => void;
 }) {
   const [geminiKey] = useGeminiKey();
-  const [geminiModel] = useGeminiModel();
+  const [geminiModel, setGeminiModel] = useGeminiModel();
+  const [geminiModels] = useGeminiModels();
   const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [photo, setPhoto] = useState<{ data: string; mediaType: string; previewUrl: string } | null>(null);
@@ -207,14 +208,16 @@ function DescribePanel({
     setBusy(true);
     setError(null);
     try {
-      setAi(
-        await estimateWithGemini(
-          geminiKey,
-          geminiModel || "gemini-flash-latest",
-          text,
-          photo ? { data: photo.data, mimeType: photo.mediaType } : undefined,
-        ),
+      const result = await estimateWithGemini(
+        geminiKey,
+        geminiModel || "gemini-flash-latest",
+        text,
+        photo ? { data: photo.data, mimeType: photo.mediaType } : undefined,
+        geminiModels,
       );
+      // Start with whichever model answered next time.
+      if (result.model !== geminiModel) setGeminiModel(result.model);
+      setAi(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : "AI estimate failed.");
     } finally {
@@ -284,12 +287,12 @@ function DescribePanel({
           <button className={ai ? "block" : "primary block"} disabled={busy || (!text.trim() && !photo)} onClick={askAi}>
             {busy ? (
               <>
-                <span className="spinner" /> Asking Gemini (searching the web)…
+                <span className="spinner" /> Asking Gemini…
               </>
             ) : ai ? (
               "Ask AI again"
             ) : (
-              "✨ Ask AI (searches the web)"
+              "✨ Ask AI"
             )}
           </button>
         </>
@@ -320,6 +323,12 @@ function DescribePanel({
             </div>
           ))}
           {ai.notes && <p className="small" style={{ margin: "6px 0 0" }}>{ai.notes}</p>}
+          {!ai.searched && (
+            <p className="small" style={{ margin: "6px 0 0", color: "var(--warn)" }}>
+              Estimated without web search (your key has no search allowance). For a chain&apos;s exact figures, use Manual →
+              Find official nutrition facts.
+            </p>
+          )}
           {ai.sources.length > 0 && (
             <ol className="sources">
               {ai.sources.map((s) => (
