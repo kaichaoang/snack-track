@@ -2,14 +2,11 @@
 
 import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
-import { defaultMealSlot, MEAL_SLOTS, newId, useGeminiKey, useGeminiModel, useGeminiModels, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
-import { estimateWithGemini, type AiEstimate, type AiItem } from "@/lib/gemini";
+import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
+import { estimateMeal, type AiEstimate, type AiItem } from "@/lib/ai";
+import { useAiEnabled, useSession } from "@/lib/sync";
 import { resizeImage } from "@/lib/image";
-import { searchFoods, type FoodResult } from "@/lib/foods";
-import { searchDishes } from "@/lib/dishes";
 import { describeMeal } from "@/lib/describe";
-
-type Mode = "describe" | "dishes" | "packaged" | "manual";
 
 interface Draft {
   key: string;
@@ -23,12 +20,13 @@ interface Review {
   origin: FoodEntry["origin"];
   drafts: Draft[];
   sources: Source[];
-  /** Log all included items as one entry with this name (free-text meals). */
+  /** Log all included items as one entry with this name (described meals). */
   combineAs?: string;
   notes?: string;
 }
 
-const PLACE_SUGGESTIONS = ["Super Simple", "Hawker centre", "Kopitiam", "Saladstop!", "Subway", "McDonald's", "Home-cooked"];
+// The quick (non-AI) estimate uses typical values; nudge it up so it errs high.
+const QUICK_ESTIMATE_BUFFER = 1.15;
 
 const draft = (name: string, portion: string, nutrients: Nutrients): Draft => ({
   key: newId(),
@@ -43,17 +41,13 @@ export function AddFood({
   entries,
   onSave,
   onCancel,
-  onOpenSettings,
 }: {
   date: string;
   entries: FoodEntry[];
   onSave: (e: FoodEntry[]) => void;
   onCancel: () => void;
-  onOpenSettings: () => void;
 }) {
-  const [mode, setMode] = useState<Mode>("describe");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());
-  const [place, setPlace] = useState("");
   const [review, setReview] = useState<Review | null>(null);
   const [multiplier, setMultiplier] = useState(1);
 
@@ -61,7 +55,8 @@ export function AddFood({
     if (!review) return;
     const now = Date.now();
     const included = review.drafts.filter((d) => d.include);
-    if (review.combineAs && included.length) {
+    if (included.length === 0) return;
+    if (review.combineAs) {
       onSave([
         {
           id: newId(),
@@ -72,15 +67,13 @@ export function AddFood({
           portion: (multiplier === 1 ? "" : `×${multiplier} · `) + included.map((d) => d.name.split(" (")[0]).join(", "),
           nutrients: scaleNutrients(sumNutrients(included.map((d) => d.nutrients)), multiplier),
           origin: review.origin,
-          place: place.trim() || undefined,
           sources: review.sources.length ? review.sources : undefined,
         },
       ]);
       return;
     }
-    const added: FoodEntry[] = review.drafts
-      .filter((d) => d.include)
-      .map((d, i) => ({
+    onSave(
+      included.map((d, i) => ({
         id: newId(),
         date,
         createdAt: now + i,
@@ -89,14 +82,12 @@ export function AddFood({
         portion: multiplier === 1 ? d.portion : `${d.portion} ×${multiplier}`,
         nutrients: scaleNutrients(d.nutrients, multiplier),
         origin: review.origin,
-        place: place.trim() || undefined,
         sources: review.sources.length ? review.sources : undefined,
-      }));
-    if (added.length) onSave(added);
+      })),
+    );
   }
 
   function relog(e: FoodEntry) {
-    setPlace(e.place ?? "");
     setMultiplier(1);
     setReview({ origin: e.origin, sources: e.sources ?? [], drafts: [draft(e.name, e.portion, e.nutrients)] });
   }
@@ -110,20 +101,14 @@ export function AddFood({
 
       {!review && (
         <>
-          <div className="seg" role="group" aria-label="How to add" style={{ marginBottom: 12 }}>
-            <button aria-pressed={mode === "describe"} onClick={() => setMode("describe")}>Describe</button>
-            <button aria-pressed={mode === "dishes"} onClick={() => setMode("dishes")}>Dishes</button>
-            <button aria-pressed={mode === "packaged"} onClick={() => setMode("packaged")}>Packaged</button>
-            <button aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>Manual</button>
-          </div>
-          {mode === "describe" && (
-            <DescribePanel onUse={setReview} onManual={() => setMode("manual")} onOpenSettings={onOpenSettings} />
-          )}
-          {mode === "dishes" && (
-            <DishPanel onPick={(d) => setReview({ origin: "dish", sources: [], drafts: [d] })} />
-          )}
-          {mode === "packaged" && <PackagedPanel onPick={setReview} />}
-          {mode === "manual" && <ManualPanel place={place} setPlace={setPlace} onStart={setReview} />}
+          <DescribePanel onUse={setReview} />
+          <button
+            className="block"
+            style={{ marginBottom: 12 }}
+            onClick={() => setReview({ origin: "manual", sources: [], drafts: [draft("", "1 serving", EMPTY_NUTRIENTS)] })}
+          >
+            ✏️ Log manually
+          </button>
           <RecentPanel entries={entries} onPick={relog} />
         </>
       )}
@@ -136,8 +121,6 @@ export function AddFood({
           setMultiplier={setMultiplier}
           meal={meal}
           setMeal={setMeal}
-          place={place}
-          setPlace={setPlace}
           onBack={() => setReview(null)}
           onSave={save}
         />
@@ -151,11 +134,11 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
   const seen = new Set<string>();
   const recent: FoodEntry[] = [];
   for (const e of [...entries].sort((a, b) => b.createdAt - a.createdAt)) {
-    const k = `${e.name}|${e.portion}|${e.place ?? ""}`.toLowerCase();
+    const k = `${e.name}|${e.portion}`.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
     recent.push(e);
-    if (recent.length === 8) break;
+    if (recent.length === 6) break;
   }
   if (recent.length === 0) return null;
   return (
@@ -169,9 +152,8 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
             </span>
             <b className="num">{Math.round(e.nutrients.calories)}</b>
           </div>
-          <div className="small muted">
+          <div className="small muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {e.portion}
-            {e.place ? ` · ${e.place}` : ""}
           </div>
         </button>
       ))}
@@ -179,20 +161,12 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
   );
 }
 
-const BASIS_LABEL: Record<AiItem["basis"], string> = { published: "Official", database: "Database", estimate: "Estimate" };
+const BASIS_LABEL: Record<AiItem["basis"], string> = { published: "Official figures", database: "Standard figures", estimate: "Estimate" };
 
-function DescribePanel({
-  onUse,
-  onManual,
-  onOpenSettings,
-}: {
-  onUse: (r: Review) => void;
-  onManual: () => void;
-  onOpenSettings: () => void;
-}) {
-  const [geminiKey] = useGeminiKey();
-  const [geminiModel, setGeminiModel] = useGeminiModel();
-  const [geminiModels] = useGeminiModels();
+function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
+  const [session] = useSession();
+  const aiEnabled = useAiEnabled();
+  const canUseAi = !!session && aiEnabled;
   const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [photo, setPhoto] = useState<{ data: string; mediaType: string; previewUrl: string } | null>(null);
@@ -200,61 +174,57 @@ function DescribePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { items, unmatched } = describeMeal(text);
-  const total = sumNutrients(ai ? ai.items.map((i) => i.nutrients) : items.map((i) => i.nutrients));
+  // Quick estimate: used when AI isn't available on this account, or as a fallback.
+  const quick = describeMeal(text).items.map((i) => ({ ...i, nutrients: scaleNutrients(i.nutrients, QUICK_ESTIMATE_BUFFER) }));
   const name = text.trim() || ai?.mealName || "Meal";
+  const showQuick = !canUseAi || (!!error && quick.length > 0);
 
   async function askAi() {
+    if (!session) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await estimateWithGemini(
-        geminiKey,
-        geminiModel || "gemini-flash-latest",
-        text,
-        photo ? { data: photo.data, mimeType: photo.mediaType } : undefined,
-        geminiModels,
-      );
-      // Start with whichever model answered next time.
-      if (result.model !== geminiModel) setGeminiModel(result.model);
-      setAi(result);
+      setAi(await estimateMeal(session.token, text, photo ? { data: photo.data, mimeType: photo.mediaType } : undefined));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "AI estimate failed.");
+      setError(e instanceof Error ? e.message : "Couldn't estimate that. Try again, or log manually.");
     } finally {
       setBusy(false);
     }
   }
 
-  function useEstimate() {
-    if (ai) {
-      onUse({
-        origin: "ai",
-        sources: ai.sources,
-        notes: ai.notes,
-        combineAs: name,
-        drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients)),
-      });
-    } else {
-      onUse({ origin: "described", sources: [], combineAs: name, drafts: items.map((i) => draft(i.name, i.amount, i.nutrients)) });
-    }
+  function useAi() {
+    if (!ai) return;
+    onUse({
+      origin: "ai",
+      sources: ai.sources,
+      notes: ai.notes,
+      combineAs: name,
+      drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients)),
+    });
   }
+
+  function useQuick() {
+    onUse({ origin: "described", sources: [], combineAs: name, drafts: quick.map((i) => draft(i.name, i.amount, i.nutrients)) });
+  }
+
+  const total = sumNutrients(ai ? ai.items.map((i) => i.nutrients) : quick.map((i) => i.nutrients));
 
   return (
     <section className="card stack">
       <label className="field">
-        <span>Describe what you ate, the way you&apos;d say it</span>
+        <span>What did you eat?</span>
         <textarea
           value={text}
           onChange={(e) => {
             setText(e.target.value);
             setAi(null);
+            setError(null);
           }}
           placeholder="e.g. grouper fish soup with less rice, a little sauce, some soup"
-          autoFocus
         />
       </label>
 
-      {geminiKey ? (
+      {canUseAi && (
         <>
           <input
             ref={fileRef}
@@ -270,7 +240,7 @@ function DescribePanel({
                 setPhoto(await resizeImage(f));
                 setAi(null);
               } catch {
-                setError("Couldn't read that image.");
+                setError("Couldn't read that photo.");
               }
             }}
           />
@@ -284,30 +254,22 @@ function DescribePanel({
           ) : (
             <button onClick={() => fileRef.current?.click()}>📷 Add a photo (optional)</button>
           )}
-          <button className={ai ? "block" : "primary block"} disabled={busy || (!text.trim() && !photo)} onClick={askAi}>
-            {busy ? (
-              <>
-                <span className="spinner" /> Asking Gemini…
-              </>
-            ) : ai ? (
-              "Ask AI again"
-            ) : (
-              "✨ Ask AI"
-            )}
-          </button>
+          {!ai && (
+            <button className="primary block" disabled={busy || (!text.trim() && !photo)} onClick={askAi}>
+              {busy ? (
+                <>
+                  <span className="spinner" /> Estimating…
+                </>
+              ) : (
+                "✨ Estimate"
+              )}
+            </button>
+          )}
         </>
-      ) : (
-        <p className="small muted" style={{ margin: 0 }}>
-          Showing a quick offline estimate.{" "}
-          <button className="ghost small" style={{ padding: 0, color: "var(--accent)" }} onClick={onOpenSettings}>
-            Add a free Gemini key
-          </button>{" "}
-          for AI estimates that look up restaurant facts online and read photos.
-        </p>
       )}
       {error && <div className="error">{error}</div>}
 
-      {ai ? (
+      {ai && (
         <div>
           <div className="row between">
             <b>{ai.mealName}</b>
@@ -323,12 +285,6 @@ function DescribePanel({
             </div>
           ))}
           {ai.notes && <p className="small" style={{ margin: "6px 0 0" }}>{ai.notes}</p>}
-          {!ai.searched && (
-            <p className="small" style={{ margin: "6px 0 0", color: "var(--warn)" }}>
-              Estimated without web search (your key has no search allowance). For a chain&apos;s exact figures, use Manual →
-              Find official nutrition facts.
-            </p>
-          )}
           {ai.sources.length > 0 && (
             <ol className="sources">
               {ai.sources.map((s) => (
@@ -337,203 +293,45 @@ function DescribePanel({
             </ol>
           )}
         </div>
-      ) : (
-        items.length > 0 && (
-          <div>
-            {geminiKey && <div className="small muted">Quick offline estimate:</div>}
-            {items.map((i) => (
-              <div className="entry" key={i.id}>
-                <div className="grow">
-                  <div className="name">{i.name}</div>
-                  <div className="meta">{i.amount}</div>
-                </div>
-                <span className="kcal">{Math.round(i.nutrients.calories)}</span>
-              </div>
-            ))}
-          </div>
-        )
       )}
 
-      {(ai || items.length > 0) && (
-        <>
+      {!ai && showQuick && quick.length > 0 && (
+        <div>
+          {quick.map((i) => (
+            <div className="entry" key={i.id}>
+              <div className="grow">
+                <div className="name">{i.name}</div>
+                <div className="meta">{i.amount}</div>
+              </div>
+              <span className="kcal">{Math.round(i.nutrients.calories)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(ai || (showQuick && quick.length > 0)) && (
+        <div>
           <div className="row between" style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
             <b>Total</b>
             <b className="num">{Math.round(total.calories)} kcal</b>
           </div>
-          <div className="small muted num" style={{ marginTop: 0 }}>
+          <div className="small muted num">
             P {Math.round(total.proteinG)} g · C {Math.round(total.carbsG)} g · F {Math.round(total.fatG)} g
           </div>
-        </>
-      )}
-      {!ai && unmatched.length > 0 && (
-        <div className="small" style={{ color: "var(--warn)" }}>
-          Didn&apos;t recognise offline: {unmatched.join(", ")}.{" "}
-          {geminiKey ? "Ask AI to include it." : (
-            <>
-              Add it on the next screen, or use{" "}
-              <button className="ghost small" style={{ padding: 0, color: "var(--accent)" }} onClick={onManual}>Manual</button>.
-            </>
-          )}
         </div>
       )}
-      <button className={geminiKey && !ai ? "block" : "primary block"} disabled={!ai && !text.trim()} onClick={useEstimate}>
-        {ai ? "Review & log" : geminiKey ? "Log offline estimate" : "Review & log"}
-      </button>
-    </section>
-  );
-}
 
-function DishPanel({ onPick }: { onPick: (d: Draft) => void }) {
-  const [q, setQ] = useState("");
-  const all = searchDishes(q);
-  const results = q.trim() ? all : all.slice(0, 12);
-  return (
-    <section className="card stack">
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. chicken rice, laksa, kopi" autoFocus />
-      <p className="muted small" style={{ margin: 0 }}>
-        Typical values for one standard serving of common Singapore dishes. Portions vary by stall, so adjust on the next
-        screen.
-      </p>
-      {all.length === 0 && <p className="muted small">No match. Try Packaged or Manual.</p>}
-      {results.map((d) => (
-        <button key={d.name} className="block" style={{ textAlign: "left" }} onClick={() => onPick(draft(d.name, d.portion, d.nutrients))}>
-          <div className="row between">
-            <b className="grow">{d.name}</b>
-            <span className="num">{d.nutrients.calories}</span>
-          </div>
-          <div className="small muted">{d.portion}</div>
-        </button>
-      ))}
-      {results.length < all.length && (
-        <p className="muted small" style={{ margin: 0 }}>Type to search all {all.length} dishes.</p>
-      )}
-    </section>
-  );
-}
-
-function ManualPanel({
-  place,
-  setPlace,
-  onStart,
-}: {
-  place: string;
-  setPlace: (s: string) => void;
-  onStart: (r: Review) => void;
-}) {
-  const [name, setName] = useState("");
-  const query = [place.trim(), name.trim(), "nutrition facts calories"].filter(Boolean).join(" ");
-  return (
-    <section className="card stack">
-      <p className="muted small" style={{ margin: 0 }}>
-        For restaurant meals (e.g. Super Simple), look up the official figures, then type them in. Next time, the meal shows
-        up under Recent.
-      </p>
-      <label className="field">
-        <span>Where</span>
-        <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="e.g. Super Simple" list="places" />
-        <datalist id="places">
-          {PLACE_SUGGESTIONS.map((p) => <option key={p} value={p} />)}
-        </datalist>
-      </label>
-      <label className="field">
-        <span>What</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hunter's Bowl" />
-      </label>
-      <a
-        className="block"
-        href={`https://www.google.com/search?q=${encodeURIComponent(query)}`}
-        target="_blank"
-        rel="noreferrer"
-        style={{ textAlign: "center", padding: "10px 14px", border: "1px solid var(--border)", borderRadius: 10, textDecoration: "none" }}
-      >
-        Find official nutrition facts ↗
-      </a>
-      <button
-        className="primary block"
-        onClick={() => onStart({ origin: "manual", sources: [], drafts: [draft(name.trim(), "1 serving", EMPTY_NUTRIENTS)] })}
-      >
-        Enter numbers
-      </button>
-    </section>
-  );
-}
-
-function PackagedPanel({ onPick }: { onPick: (r: Review) => void }) {
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState<FoodResult[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [picked, setPicked] = useState<FoodResult | null>(null);
-  const [grams, setGrams] = useState(100);
-
-  async function search(e: React.FormEvent) {
-    e.preventDefault();
-    const term = q.trim();
-    if (!term) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setResults(await searchFoods(term));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (picked) {
-    const n = scaleNutrients(picked.per100g, grams / 100);
-    return (
-      <section className="card stack">
-        <div>
-          <b>{picked.name}</b> <span className="muted small">{picked.brand}</span>
-        </div>
-        <div className="small muted">
-          Per 100 g: {Math.round(picked.per100g.calories)} kcal{picked.servingSize ? ` · serving: ${picked.servingSize}` : ""}
-        </div>
-        <label className="field">
-          <span>Amount eaten (g or ml)</span>
-          <input type="number" inputMode="decimal" value={grams} onChange={(e) => setGrams(parseFloat(e.target.value) || 0)} />
-        </label>
-        {picked.servingGrams && (
-          <button onClick={() => setGrams(picked.servingGrams!)}>Use 1 serving ({picked.servingGrams} g)</button>
-        )}
-        <div className="notice num">{Math.round(n.calories)} kcal · P {n.proteinG.toFixed(1)} · C {n.carbsG.toFixed(1)} · F {n.fatG.toFixed(1)}</div>
+      {ai && (
         <div className="row">
-          <button className="grow" onClick={() => setPicked(null)}>Back</button>
-          <button
-            className="primary grow"
-            disabled={grams <= 0}
-            onClick={() =>
-              onPick({
-                origin: "database",
-                sources: [{ title: `Open Food Facts: ${picked.name}`, url: picked.url }],
-                drafts: [draft(picked.brand ? `${picked.name} (${picked.brand})` : picked.name, `${grams} g`, n)],
-              })
-            }
-          >
-            Continue
-          </button>
+          <button className="grow" disabled={busy} onClick={askAi}>{busy ? <span className="spinner" /> : "Try again"}</button>
+          <button className="primary grow" onClick={useAi}>Review &amp; log</button>
         </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="card stack">
-      <form className="row" onSubmit={search}>
-        <input className="grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Product name or barcode number" />
-        <button className="primary" disabled={busy}>{busy ? <span className="spinner" /> : "Search"}</button>
-      </form>
-      <p className="muted small" style={{ margin: 0 }}>Searches Open Food Facts, a free public database of packaged foods.</p>
-      {error && <div className="error">{error}</div>}
-      {results && results.length === 0 && <p className="muted small">No matches. Try fewer words, or the barcode.</p>}
-      {results?.map((r) => (
-        <button key={r.code} className="block" style={{ textAlign: "left" }} onClick={() => { setPicked(r); setGrams(r.servingGrams ?? 100); }}>
-          <div><b>{r.name}</b> <span className="muted small">{r.brand}</span></div>
-          <div className="small muted num">{Math.round(r.per100g.calories)} kcal / 100 g</div>
+      )}
+      {!ai && showQuick && (
+        <button className={canUseAi ? "block" : "primary block"} disabled={quick.length === 0} onClick={useQuick}>
+          {canUseAi ? "Use quick estimate instead" : "Review & log"}
         </button>
-      ))}
+      )}
     </section>
   );
 }
@@ -556,8 +354,6 @@ function ReviewPanel({
   setMultiplier,
   meal,
   setMeal,
-  place,
-  setPlace,
   onBack,
   onSave,
 }: {
@@ -567,14 +363,13 @@ function ReviewPanel({
   setMultiplier: (n: number) => void;
   meal: MealSlot;
   setMeal: (m: MealSlot) => void;
-  place: string;
-  setPlace: (s: string) => void;
   onBack: () => void;
   onSave: () => void;
 }) {
   const updateDraft = (key: string, patch: Partial<Draft>) =>
     setReview({ ...review, drafts: review.drafts.map((d) => (d.key === key ? { ...d, ...patch } : d)) });
   const total = scaleNutrients(sumNutrients(review.drafts.filter((d) => d.include).map((d) => d.nutrients)), multiplier);
+  const manual = review.origin === "manual";
 
   return (
     <>
@@ -587,9 +382,6 @@ function ReviewPanel({
         </div>
         {review.combineAs && <p style={{ margin: "6px 0 0" }}>“{review.combineAs}”</p>}
         {review.notes && <p className="small" style={{ margin: "6px 0 0" }}>{review.notes}</p>}
-        {(review.origin === "dish" || review.origin === "described") && (
-          <p className="small muted" style={{ marginBottom: 0 }}>Typical values. Adjust the portion if yours was bigger or smaller.</p>
-        )}
         {review.sources.length > 0 && (
           <ol className="sources">
             {review.sources.map((s) => (
@@ -600,23 +392,29 @@ function ReviewPanel({
       </section>
 
       <section className="card stack">
-        <label className="field">
-          <span>How much did you eat?</span>
-        </label>
-        <div className="seg" role="group" aria-label="Portion">
-          {[0.5, 0.75, 1, 1.25, 1.5, 2].map((m) => (
-            <button key={m} aria-pressed={multiplier === m} onClick={() => setMultiplier(m)}>×{m}</button>
-          ))}
-        </div>
+        {!manual && (
+          <>
+            <label className="field">
+              <span>How much did you eat?</span>
+            </label>
+            <div className="seg" role="group" aria-label="Portion">
+              {[0.5, 0.75, 1, 1.25, 1.5, 2].map((m) => (
+                <button key={m} aria-pressed={multiplier === m} onClick={() => setMultiplier(m)}>×{m}</button>
+              ))}
+            </div>
+          </>
+        )}
 
         {review.drafts.map((d) => (
           <div className="item-edit" key={d.key} style={{ opacity: d.include ? 1 : 0.5 }}>
             <div className="row">
-              <input type="checkbox" checked={d.include} onChange={(e) => updateDraft(d.key, { include: e.target.checked })} style={{ width: "auto" }} aria-label="Include" />
-              <input className="grow" value={d.name} placeholder="Food name" onChange={(e) => updateDraft(d.key, { name: e.target.value })} />
+              {review.drafts.length > 1 && (
+                <input type="checkbox" checked={d.include} onChange={(e) => updateDraft(d.key, { include: e.target.checked })} style={{ width: "auto" }} aria-label="Include" />
+              )}
+              <input className="grow" value={d.name} placeholder="What did you eat?" onChange={(e) => updateDraft(d.key, { name: e.target.value })} />
             </div>
             <div className="row" style={{ margin: "6px 0" }}>
-              <input className="grow small" value={d.portion} onChange={(e) => updateDraft(d.key, { portion: e.target.value })} aria-label="Portion" />
+              <input className="grow" value={d.portion} placeholder="Portion" onChange={(e) => updateDraft(d.key, { portion: e.target.value })} aria-label="Portion" />
             </div>
             <div className="mini-grid">
               {NUM_FIELDS.map((f) => (
@@ -625,7 +423,8 @@ function ReviewPanel({
                   <input
                     type="number"
                     inputMode="decimal"
-                    value={Math.round(d.nutrients[f.key] * 10) / 10}
+                    value={Math.round(d.nutrients[f.key] * 10) / 10 || ""}
+                    placeholder="0"
                     onChange={(e) => updateDraft(d.key, { nutrients: { ...d.nutrients, [f.key]: parseFloat(e.target.value) || 0 } })}
                   />
                 </label>
@@ -639,21 +438,17 @@ function ReviewPanel({
       </section>
 
       <section className="card stack">
-        <div className="grid2">
-          <label className="field">
-            <span>Meal</span>
-            <select value={meal} onChange={(e) => setMeal(e.target.value as MealSlot)}>
-              {MEAL_SLOTS.map((m) => <option key={m} value={m}>{m[0].toUpperCase() + m.slice(1)}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>Place</span>
-            <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="optional" />
-          </label>
-        </div>
+        <label className="field">
+          <span>Meal</span>
+          <select value={meal} onChange={(e) => setMeal(e.target.value as MealSlot)}>
+            {MEAL_SLOTS.map((m) => <option key={m} value={m}>{m[0].toUpperCase() + m.slice(1)}</option>)}
+          </select>
+        </label>
         <div className="row">
           <button className="grow" onClick={onBack}>Back</button>
-          <button className="primary grow" onClick={onSave} disabled={!review.drafts.some((d) => d.include)}>Log it</button>
+          <button className="primary grow" onClick={onSave} disabled={!review.drafts.some((d) => d.include && (d.name.trim() || d.nutrients.calories > 0))}>
+            Log it
+          </button>
         </div>
       </section>
     </>

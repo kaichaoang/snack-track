@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { KCAL_PER_KG_FAT, localDateKey, sumNutrients, weightTrend, type Profile, type Targets } from "@/lib/nutrition";
 import type { FoodEntry, WeightEntry } from "@/lib/store";
-import { prettyDate, shiftDate } from "./TodayView";
+import { fullDate, prettyDate, shiftDate } from "./TodayView";
 
 function WeightChart({ weights, goal }: { weights: WeightEntry[]; goal: number }) {
   const data = weightTrend([...weights].sort((a, b) => a.date.localeCompare(b.date)).slice(-60));
@@ -30,8 +30,8 @@ function WeightChart({ weights, goal }: { weights: WeightEntry[]; goal: number }
           <circle key={d.date} cx={x(i)} cy={y(d.kg)} r="2.5" fill="var(--muted)" opacity="0.6" />
         ))}
         <path d={trendPath} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinejoin="round" />
-        <text x={pad.l} y={H - 4}>{prettyDate(data[0].date)}</text>
-        <text x={W - pad.r} y={H - 4} textAnchor="end">{prettyDate(data[data.length - 1].date)}</text>
+        <text x={pad.l} y={H - 4}>{fullDate(data[0].date)}</text>
+        <text x={W - pad.r} y={H - 4} textAnchor="end">{fullDate(data[data.length - 1].date)}</text>
       </svg>
     </div>
   );

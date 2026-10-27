@@ -37,19 +37,18 @@ export const KEYS = {
   profile: "snacktrack.profile.v1",
   entries: "snacktrack.entries.v1",
   weights: "snacktrack.weights.v1",
-  // Not part of exportAll(), so backups never contain the key.
-  geminiKey: "snacktrack.geminiKey.v1",
-  geminiModel: "snacktrack.geminiModel.v1",
-  geminiModels: "snacktrack.geminiModels.v1",
   // Cloud sync (lib/sync.ts). Not part of exportAll().
   session: "snacktrack.session.v1",
   syncQueue: "snacktrack.syncQueue.v1",
   syncStatus: "snacktrack.syncStatus.v1",
+  aiEnabled: "snacktrack.aiEnabled.v1",
 } as const;
 
-// Earlier versions stored an Anthropic API key; remove it if present.
+// Earlier versions kept AI keys in the browser; the key now lives on the server.
 try {
-  if (typeof localStorage !== "undefined") localStorage.removeItem("snacktrack.anthropicKey.v1");
+  if (typeof localStorage !== "undefined") {
+    for (const k of ["anthropicKey", "geminiKey", "geminiModel", "geminiModels"]) localStorage.removeItem(`snacktrack.${k}.v1`);
+  }
 } catch {
   // Storage blocked: nothing to remove.
 }
@@ -126,21 +125,6 @@ export function useEntries() {
 
 export function useWeights() {
   return useStored<WeightEntry[]>(KEYS.weights, NO_WEIGHTS);
-}
-
-export function useGeminiKey() {
-  return useStored<string>(KEYS.geminiKey, "");
-}
-
-export function useGeminiModel() {
-  return useStored<string>(KEYS.geminiModel, "");
-}
-
-const NO_MODELS: string[] = [];
-
-/** Models the key can use, best first; used as fallbacks when one is busy. */
-export function useGeminiModels() {
-  return useStored<string[]>(KEYS.geminiModels, NO_MODELS);
 }
 
 export function newId(): string {

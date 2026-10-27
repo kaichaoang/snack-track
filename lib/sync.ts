@@ -12,10 +12,7 @@
 
 import type { Profile } from "./nutrition";
 import { KEYS, read, write, useStored, type FoodEntry, type WeightEntry } from "./store";
-
-const SUPABASE_URL = "https://esnphmnqxbdeygwrusjv.supabase.co";
-// Publishable key: safe to ship in a public site (it can only call the RPCs).
-const SUPABASE_KEY = "sb_publishable_SxXrDDCnLcnK5Jw1pgjGng_BMQcI6ow";
+import { SUPABASE_KEY, SUPABASE_URL } from "./config";
 
 export interface Session {
   token: string;
@@ -50,7 +47,7 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
       body: JSON.stringify(args),
     });
   } catch {
-    throw new RpcError("You're offline. Changes will sync when you're back online.");
+    throw new RpcError("No connection. Your changes are kept on this phone and saved when you're back online.");
   }
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -64,6 +61,11 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
 
 export function useSession() {
   return useStored<Session | null>(KEYS.session, null);
+}
+
+/** Whether this account may use AI estimates (from the server). */
+export function useAiEnabled() {
+  return useStored<boolean>(KEYS.aiEnabled, false)[0];
 }
 
 export function useSyncStatus() {
@@ -95,6 +97,7 @@ export async function signOut(): Promise<void> {
   const s = session();
   write(KEYS.session, null);
   write(KEYS.syncQueue, []);
+  write(KEYS.aiEnabled, false);
   setStatus("local");
   if (s) await rpc("logout", { p_token: s.token }).catch(() => undefined);
 }
@@ -103,6 +106,7 @@ interface Remote {
   profile: Profile | null;
   entries: FoodEntry[];
   weights: { date: string; kg: number | string }[];
+  ai?: boolean;
 }
 
 /** First sign-in on a device: upload anything the account doesn't have yet, then pull. */
@@ -111,6 +115,7 @@ async function mergeLocalIntoAccount() {
   if (!s) return;
   setStatus("syncing");
   const remote = await rpc<Remote>("snack_load", { p_token: s.token });
+  write(KEYS.aiEnabled, !!remote.ai);
   const remoteIds = new Set(remote.entries.map((e) => e.id));
   const remoteDays = new Set(remote.weights.map((w) => w.date));
   const ops: Op[] = [];
@@ -209,6 +214,7 @@ export async function syncNow(): Promise<void> {
       else if (op.t === "deleteWeight") weights = weights.filter((w) => w.date !== op.date);
       else profile = op.profile;
     }
+    write(KEYS.aiEnabled, !!remote.ai);
     if (profile) write(KEYS.profile, profile);
     write(KEYS.entries, entries);
     write(KEYS.weights, weights);

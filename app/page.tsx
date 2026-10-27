@@ -9,15 +9,25 @@ import { ProfileForm } from "@/components/ProfileForm";
 import { TodayView } from "@/components/TodayView";
 import { AddFood } from "@/components/AddFood";
 import { ProgressView } from "@/components/ProgressView";
-import { GeminiCard } from "@/components/GeminiCard";
 
 type Tab = "today" | "add" | "progress" | "settings";
 
-const ICONS: Record<Tab, React.ReactNode> = {
-  today: <path d="M4 5h16v15H4zM4 9h16M9 3v4M15 3v4" />,
-  add: <path d="M12 5v14M5 12h14" />,
-  progress: <path d="M4 19l5-6 4 3 7-9" />,
-  settings: <path d="M12 15a3 3 0 100-6 3 3 0 000 6zM19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.5-1.5M5.5 18.5L7 17M17 17l1.5 1.5M5.5 5.5L7 7" />,
+// Instagram-style tab icons: outline when idle, bolder (home filled) when active.
+const ICONS: Record<Tab, (active: boolean) => React.ReactNode> = {
+  today: (a) => <path d="M3.5 10.5 12 3.5l8.5 7V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z" fill={a ? "currentColor" : "none"} />,
+  add: () => (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="5" />
+      <path d="M12 8v8M8 12h8" />
+    </>
+  ),
+  progress: () => <path d="M3 17l5.5-5.5 4 4L21 7M15 7h6v6" />,
+  settings: () => (
+    <>
+      <circle cx="12" cy="8.5" r="4" />
+      <path d="M4 20.5c1.4-3.6 4.4-5.5 8-5.5s6.6 1.9 8 5.5" />
+    </>
+  ),
 };
 const LABELS: Record<Tab, string> = { today: "Today", add: "Add", progress: "Progress", settings: "Goals" };
 
@@ -75,7 +85,7 @@ export default function Home() {
         <span className="sub num">
           {Math.round(t.calories)} kcal/day target
           {session && syncStatus !== "synced" && syncStatus !== "local" && (
-            <span title="Cloud sync" style={{ marginLeft: 6 }}>{syncStatus === "error" ? "⚠︎" : "⟳"}</span>
+            <span title="Saving" style={{ marginLeft: 6 }}>{syncStatus === "error" ? "⚠︎" : "⟳"}</span>
           )}
         </span>
       </header>
@@ -96,7 +106,6 @@ export default function Home() {
           date={date}
           entries={entries}
           onCancel={() => setTab("today")}
-          onOpenSettings={() => setTab("settings")}
           onSave={(added) => {
             addEntries(added);
             setTab("today");
@@ -122,7 +131,6 @@ export default function Home() {
             <ProfileForm initial={profile} onSave={(p) => { saveProfile(p); setTab("today"); }} />
           </section>
           <AccountCard />
-          <GeminiCard />
           <section className="card stack">
             <h2>Your data</h2>
             <p className="muted small" style={{ margin: 0 }}>
@@ -167,7 +175,7 @@ export default function Home() {
             </div>
           </section>
           <p className="small muted">
-            Dish values are typical servings and vary by stall. This app is not medical advice; if you have a health condition,
+            Estimates are approximate and lean high on purpose. This app is not medical advice; if you have a health condition,
             check targets with a doctor or dietitian.
           </p>
         </>
@@ -176,11 +184,10 @@ export default function Home() {
       <nav className="tabs">
         <div className="inner">
           {(Object.keys(LABELS) as Tab[]).map((k) => (
-            <button key={k} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {ICONS[k]}
+            <button key={k} aria-label={LABELS[k]} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === k ? 2.4 : 1.7} strokeLinecap="round" strokeLinejoin="round">
+                {ICONS[k](tab === k)}
               </svg>
-              {LABELS[k]}
             </button>
           ))}
         </div>

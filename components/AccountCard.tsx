@@ -4,11 +4,11 @@ import { useState } from "react";
 import { signIn, signOut, syncNow, useSession, useSyncStatus, type SyncStatus } from "@/lib/sync";
 
 const STATUS_TEXT: Record<SyncStatus, string> = {
-  local: "Not synced",
-  synced: "Synced",
-  pending: "Waiting to sync",
-  syncing: "Syncing…",
-  error: "Sync failed, will retry",
+  local: "Not saved yet",
+  synced: "Saved",
+  pending: "Saving soon",
+  syncing: "Saving…",
+  error: "Couldn't save, will retry",
 };
 
 export function AccountCard() {
@@ -35,7 +35,7 @@ export function AccountCard() {
   if (session) {
     return (
       <section className="card stack">
-        <h2>Account &amp; sync</h2>
+        <h2>Account</h2>
         <div className="row between">
           <span>
             Signed in as <b>{session.displayName || session.username}</b>
@@ -43,11 +43,10 @@ export function AccountCard() {
           <span className={`pill ${status === "synced" ? "good" : status === "error" ? "warn" : ""}`}>{STATUS_TEXT[status]}</span>
         </div>
         <p className="muted small" style={{ margin: 0 }}>
-          Your log, weigh-ins and goal are saved to your account and sync across devices. The app still works offline and
-          catches up when you&apos;re back online.
+          Your log, weigh-ins and goal are saved to your account, so you can use them on any phone.
         </p>
         <div className="row">
-          <button className="grow" disabled={status === "syncing"} onClick={() => void syncNow()}>Sync now</button>
+          <button className="grow" disabled={status === "syncing"} onClick={() => void syncNow()}>Refresh</button>
           <button className="grow" onClick={() => void signOut()}>Log out</button>
         </div>
       </section>
@@ -56,10 +55,10 @@ export function AccountCard() {
 
   return (
     <section className="card stack">
-      <h2>Account &amp; sync</h2>
+      <h2>Account</h2>
       <p className="muted small" style={{ margin: 0 }}>
-        Sign in to save your history to the cloud and use it on any device. Whatever
-        you&apos;ve logged on this device is uploaded when you sign in.
+        Sign in to keep your history safe and use it on any phone. What you&apos;ve logged on this phone is kept when you
+        sign in.
       </p>
       {status === "error" && <div className="error">Your session expired. Please sign in again.</div>}
       <form

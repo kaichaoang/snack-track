@@ -8,12 +8,24 @@ export function shiftDate(key: string, days: number): string {
   return localDateKey(new Date(y, m - 1, d + days));
 }
 
+/** "Tue, 27 Oct" (adds the year when it isn't this year). */
+export function fullDate(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(y !== new Date().getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+/** "Today · Tue, 27 Oct", "Yesterday · Mon, 26 Oct", or just the date. */
 export function prettyDate(key: string): string {
   const today = localDateKey();
-  if (key === today) return "Today";
-  if (key === shiftDate(today, -1)) return "Yesterday";
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  if (key === today) return `Today · ${fullDate(key)}`;
+  if (key === shiftDate(today, -1)) return `Yesterday · ${fullDate(key)}`;
+  return fullDate(key);
 }
 
 function Ring({ eaten, target }: { eaten: number; target: number }) {

@@ -53,7 +53,7 @@ html, body {
 .app {
   max-width: 560px;
   margin: 0 auto;
-  padding: 16px 16px 96px;
+  padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 84px);
 }
 
 header.top {
@@ -91,6 +91,7 @@ label.field > span { display: block; margin-bottom: 4px; }
 input, select, textarea {
   width: 100%;
   font: inherit;
+  font-size: 16px; /* below 16px, iOS Safari zooms in on focus */
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -122,20 +123,24 @@ button.block { width: 100%; }
 .seg button { flex: 1; border: none; background: transparent; padding: 8px 4px; font-size: 0.88rem; min-width: 0; }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); font-weight: 600; }
 
+/* Instagram-style tab bar: icons only, thin top rule, padded above the iPhone home indicator. */
 nav.tabs {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   background: var(--surface);
-  border-top: 1px solid var(--border);
+  border-top: 0.5px solid var(--border);
   display: flex;
   justify-content: center;
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  padding: 4px 8px calc(env(safe-area-inset-bottom, 0px) + 10px);
   z-index: 10;
 }
-nav.tabs .inner { display: flex; max-width: 560px; width: 100%; }
-nav.tabs button { flex: 1; border: none; background: transparent; color: var(--muted); padding: 8px 4px; font-size: 0.8rem; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-nav.tabs button[aria-current="page"] { color: var(--accent); font-weight: 600; }
-nav.tabs svg { width: 22px; height: 22px; }
+nav.tabs .inner { display: flex; max-width: 560px; width: 100%; justify-content: space-around; }
+nav.tabs button {
+  flex: 1; border: none; background: transparent; color: var(--text);
+  height: 48px; padding: 0; display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+nav.tabs svg { width: 27px; height: 27px; }
 
 .ring-wrap { display: flex; gap: 16px; align-items: center; }
 .ring-wrap .stats { flex: 1; display: grid; gap: 6px; }
@@ -167,7 +172,7 @@ nav.tabs svg { width: 22px; height: 22px; }
 .item-edit + .item-edit { margin-top: 10px; }
 .mini-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .mini-grid label { font-size: 0.72rem; }
-.mini-grid input { padding: 6px 8px; font-size: 0.9rem; }
+.mini-grid input { padding: 6px 8px; }
 
 a { color: var(--accent); }
 .sources { font-size: 0.82rem; padding-left: 18px; margin: 6px 0 0; }
