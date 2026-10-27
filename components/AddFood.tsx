@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
-import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
+import { defaultMealSlot, MEAL_SLOTS, newId, useGeminiKey, useGeminiModel, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
+import { estimateWithGemini, type AiEstimate, type AiItem } from "@/lib/gemini";
+import { resizeImage } from "@/lib/image";
 import { searchFoods, type FoodResult } from "@/lib/foods";
 import { searchDishes } from "@/lib/dishes";
 import { describeMeal } from "@/lib/describe";
@@ -23,6 +25,7 @@ interface Review {
   sources: Source[];
   /** Log all included items as one entry with this name (free-text meals). */
   combineAs?: string;
+  notes?: string;
 }
 
 const PLACE_SUGGESTIONS = ["Super Simple", "Hawker centre", "Kopitiam", "Saladstop!", "Subway", "McDonald's", "Home-cooked"];
@@ -40,11 +43,13 @@ export function AddFood({
   entries,
   onSave,
   onCancel,
+  onOpenSettings,
 }: {
   date: string;
   entries: FoodEntry[];
   onSave: (e: FoodEntry[]) => void;
   onCancel: () => void;
+  onOpenSettings: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("describe");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());
@@ -68,6 +73,7 @@ export function AddFood({
           nutrients: scaleNutrients(sumNutrients(included.map((d) => d.nutrients)), multiplier),
           origin: review.origin,
           place: place.trim() || undefined,
+          sources: review.sources.length ? review.sources : undefined,
         },
       ]);
       return;
@@ -111,10 +117,7 @@ export function AddFood({
             <button aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>Manual</button>
           </div>
           {mode === "describe" && (
-            <DescribePanel
-              onUse={(text, drafts) => setReview({ origin: "described", sources: [], drafts, combineAs: text })}
-              onManual={() => setMode("manual")}
-            />
+            <DescribePanel onUse={setReview} onManual={() => setMode("manual")} onOpenSettings={onOpenSettings} />
           )}
           {mode === "dishes" && (
             <DishPanel onPick={(d) => setReview({ origin: "dish", sources: [], drafts: [d] })} />
@@ -176,63 +179,196 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
   );
 }
 
-function DescribePanel({ onUse, onManual }: { onUse: (text: string, drafts: Draft[]) => void; onManual: () => void }) {
+const BASIS_LABEL: Record<AiItem["basis"], string> = { published: "Official", database: "Database", estimate: "Estimate" };
+
+function DescribePanel({
+  onUse,
+  onManual,
+  onOpenSettings,
+}: {
+  onUse: (r: Review) => void;
+  onManual: () => void;
+  onOpenSettings: () => void;
+}) {
+  const [geminiKey] = useGeminiKey();
+  const [geminiModel] = useGeminiModel();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
+  const [photo, setPhoto] = useState<{ data: string; mediaType: string; previewUrl: string } | null>(null);
+  const [ai, setAi] = useState<AiEstimate | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const { items, unmatched } = describeMeal(text);
-  const total = sumNutrients(items.map((i) => i.nutrients));
+  const total = sumNutrients(ai ? ai.items.map((i) => i.nutrients) : items.map((i) => i.nutrients));
+  const name = text.trim() || ai?.mealName || "Meal";
+
+  async function askAi() {
+    setBusy(true);
+    setError(null);
+    try {
+      setAi(
+        await estimateWithGemini(
+          geminiKey,
+          geminiModel || "gemini-flash-latest",
+          text,
+          photo ? { data: photo.data, mimeType: photo.mediaType } : undefined,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI estimate failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function useEstimate() {
+    if (ai) {
+      onUse({
+        origin: "ai",
+        sources: ai.sources,
+        notes: ai.notes,
+        combineAs: name,
+        drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients)),
+      });
+    } else {
+      onUse({ origin: "described", sources: [], combineAs: name, drafts: items.map((i) => draft(i.name, i.amount, i.nutrients)) });
+    }
+  }
+
   return (
     <section className="card stack">
       <label className="field">
         <span>Describe what you ate, the way you&apos;d say it</span>
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setAi(null);
+          }}
           placeholder="e.g. grouper fish soup with less rice, a little sauce, some soup"
           autoFocus
         />
       </label>
-      <p className="muted small" style={{ margin: 0 }}>
-        Words like <i>less</i>, <i>a little</i>, <i>some</i>, <i>extra</i>, <i>no</i>, <i>2 eggs</i> or <i>150g chicken</i> adjust
-        each part. Works offline.
-      </p>
-      {items.length > 0 && (
+
+      {geminiKey ? (
+        <>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              try {
+                setPhoto(await resizeImage(f));
+                setAi(null);
+              } catch {
+                setError("Couldn't read that image.");
+              }
+            }}
+          />
+          {photo ? (
+            <div className="row">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={photo.previewUrl} alt="Meal" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }} />
+              <span className="grow small muted">Photo added</span>
+              <button className="ghost" onClick={() => { setPhoto(null); setAi(null); }}>Remove</button>
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current?.click()}>📷 Add a photo (optional)</button>
+          )}
+          <button className={ai ? "block" : "primary block"} disabled={busy || (!text.trim() && !photo)} onClick={askAi}>
+            {busy ? (
+              <>
+                <span className="spinner" /> Asking Gemini (searching the web)…
+              </>
+            ) : ai ? (
+              "Ask AI again"
+            ) : (
+              "✨ Ask AI (searches the web)"
+            )}
+          </button>
+        </>
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>
+          Showing a quick offline estimate.{" "}
+          <button className="ghost small" style={{ padding: 0, color: "var(--accent)" }} onClick={onOpenSettings}>
+            Add a free Gemini key
+          </button>{" "}
+          for AI estimates that look up restaurant facts online and read photos.
+        </p>
+      )}
+      {error && <div className="error">{error}</div>}
+
+      {ai ? (
         <div>
-          {items.map((i) => (
-            <div className="entry" key={i.id}>
+          <div className="row between">
+            <b>{ai.mealName}</b>
+            <span className={`pill ${ai.confidence === "high" ? "good" : ai.confidence === "low" ? "warn" : ""}`}>{ai.confidence} confidence</span>
+          </div>
+          {ai.items.map((i, n) => (
+            <div className="entry" key={n}>
               <div className="grow">
                 <div className="name">{i.name}</div>
-                <div className="meta">{i.amount}</div>
+                <div className="meta">{i.portion} · {BASIS_LABEL[i.basis]}</div>
               </div>
               <span className="kcal">{Math.round(i.nutrients.calories)}</span>
             </div>
           ))}
+          {ai.notes && <p className="small" style={{ margin: "6px 0 0" }}>{ai.notes}</p>}
+          {ai.sources.length > 0 && (
+            <ol className="sources">
+              {ai.sources.map((s) => (
+                <li key={s.url}><a href={s.url} target="_blank" rel="noreferrer">{s.title}</a></li>
+              ))}
+            </ol>
+          )}
+        </div>
+      ) : (
+        items.length > 0 && (
+          <div>
+            {geminiKey && <div className="small muted">Quick offline estimate:</div>}
+            {items.map((i) => (
+              <div className="entry" key={i.id}>
+                <div className="grow">
+                  <div className="name">{i.name}</div>
+                  <div className="meta">{i.amount}</div>
+                </div>
+                <span className="kcal">{Math.round(i.nutrients.calories)}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {(ai || items.length > 0) && (
+        <>
           <div className="row between" style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
             <b>Total</b>
             <b className="num">{Math.round(total.calories)} kcal</b>
           </div>
-          <div className="small muted num">
+          <div className="small muted num" style={{ marginTop: 0 }}>
             P {Math.round(total.proteinG)} g · C {Math.round(total.carbsG)} g · F {Math.round(total.fatG)} g
           </div>
-        </div>
+        </>
       )}
-      {unmatched.length > 0 && (
+      {!ai && unmatched.length > 0 && (
         <div className="small" style={{ color: "var(--warn)" }}>
-          Didn&apos;t recognise: {unmatched.join(", ")}. Add it as an item on the next screen, or use{" "}
-          <button className="ghost small" style={{ padding: 0, color: "var(--accent)" }} onClick={onManual}>Manual</button> for
-          restaurant figures.
+          Didn&apos;t recognise offline: {unmatched.join(", ")}.{" "}
+          {geminiKey ? "Ask AI to include it." : (
+            <>
+              Add it on the next screen, or use{" "}
+              <button className="ghost small" style={{ padding: 0, color: "var(--accent)" }} onClick={onManual}>Manual</button>.
+            </>
+          )}
         </div>
       )}
-      <button
-        className="primary block"
-        disabled={!text.trim()}
-        onClick={() =>
-          onUse(
-            text.trim(),
-            items.map((i) => draft(i.name, i.amount, i.nutrients)),
-          )
-        }
-      >
-        Review &amp; log
+      <button className={geminiKey && !ai ? "block" : "primary block"} disabled={!ai && !text.trim()} onClick={useEstimate}>
+        {ai ? "Review & log" : geminiKey ? "Log offline estimate" : "Review & log"}
       </button>
     </section>
   );
@@ -441,6 +577,7 @@ function ReviewPanel({
           Protein {total.proteinG.toFixed(0)} g · Carbs {total.carbsG.toFixed(0)} g · Fat {total.fatG.toFixed(0)} g · Fibre {total.fiberG.toFixed(0)} g
         </div>
         {review.combineAs && <p style={{ margin: "6px 0 0" }}>“{review.combineAs}”</p>}
+        {review.notes && <p className="small" style={{ margin: "6px 0 0" }}>{review.notes}</p>}
         {(review.origin === "dish" || review.origin === "described") && (
           <p className="small muted" style={{ marginBottom: 0 }}>Typical values. Adjust the portion if yours was bigger or smaller.</p>
         )}

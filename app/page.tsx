@@ -7,6 +7,7 @@ import { ProfileForm } from "@/components/ProfileForm";
 import { TodayView } from "@/components/TodayView";
 import { AddFood } from "@/components/AddFood";
 import { ProgressView } from "@/components/ProgressView";
+import { GeminiCard } from "@/components/GeminiCard";
 
 type Tab = "today" | "add" | "progress" | "settings";
 
@@ -83,6 +84,7 @@ export default function Home() {
           date={date}
           entries={entries}
           onCancel={() => setTab("today")}
+          onOpenSettings={() => setTab("settings")}
           onSave={(added) => {
             setEntries((prev) => [...prev, ...added]);
             setTab("today");
@@ -107,6 +109,7 @@ export default function Home() {
             <h2>Your goal</h2>
             <ProfileForm initial={profile} onSave={(p) => { setProfile(p); setTab("today"); }} />
           </section>
+          <GeminiCard />
           <section className="card stack">
             <h2>Your data</h2>
             <p className="muted small" style={{ margin: 0 }}>

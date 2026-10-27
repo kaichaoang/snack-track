@@ -23,7 +23,7 @@ export interface FoodEntry {
   name: string;
   portion: string;
   nutrients: Nutrients;
-  origin: "described" | "dish" | "database" | "manual";
+  origin: "ai" | "described" | "dish" | "database" | "manual";
   place?: string;
   sources?: Source[];
 }
@@ -37,6 +37,9 @@ const KEYS = {
   profile: "snacktrack.profile.v1",
   entries: "snacktrack.entries.v1",
   weights: "snacktrack.weights.v1",
+  // Not part of exportAll(), so backups never contain the key.
+  geminiKey: "snacktrack.geminiKey.v1",
+  geminiModel: "snacktrack.geminiModel.v1",
 } as const;
 
 // Earlier versions stored an Anthropic API key; remove it if present.
@@ -118,6 +121,14 @@ export function useEntries() {
 
 export function useWeights() {
   return useStored<WeightEntry[]>(KEYS.weights, NO_WEIGHTS);
+}
+
+export function useGeminiKey() {
+  return useStored<string>(KEYS.geminiKey, "");
+}
+
+export function useGeminiModel() {
+  return useStored<string>(KEYS.geminiModel, "");
 }
 
 export function newId(): string {
