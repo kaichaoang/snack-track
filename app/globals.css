@@ -130,6 +130,13 @@ button.block { width: 100%; }
 .seg button { flex: 1; border: none; background: transparent; padding: 8px 4px; font-size: 0.88rem; min-width: 0; }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); font-weight: 600; }
 
+/* Link styled as a button, and the Ask Claude block. */
+a.button {
+  display: block; text-align: center; text-decoration: none; font: inherit; color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 10px 14px;
+}
+.ask-claude { border-top: 1px solid var(--border); padding-top: 12px; }
+
 /* Tappable entry row (opens the editor). */
 .entry-main { background: none; border: none; padding: 0; text-align: left; color: inherit; min-width: 0; cursor: pointer; }
 button.confirm-delete { background: var(--danger); color: #fff; border-color: var(--danger); padding: 6px 10px; font-size: 0.85rem; font-weight: 600; }

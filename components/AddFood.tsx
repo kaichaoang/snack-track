@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
 import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
-import { estimateMeal, type AiEstimate, type AiItem } from "@/lib/ai";
+import { claudePrompt, claudeUrl, estimateMeal, parseClaudeReply, type AiEstimate, type AiItem } from "@/lib/ai";
 import { useAiEnabled, useSession } from "@/lib/sync";
 import { resizeImage } from "@/lib/image";
 import { describeMeal } from "@/lib/describe";
@@ -158,6 +158,77 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
         </button>
       ))}
     </section>
+  );
+}
+
+/** Copy a ready-made prompt into Claude, then paste Claude's answer back. */
+function AskClaude({ text, onUse }: { text: string; onUse: (r: Review) => void }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [reply, setReply] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const prompt = claudePrompt(text);
+
+  function copy() {
+    // Fire-and-forget: the link opens Claude in the same tap.
+    navigator.clipboard?.writeText(prompt).then(() => setCopied(true), () => setCopied(false));
+    setOpen(true);
+  }
+
+  async function pasteFromClipboard() {
+    try {
+      setReply(await navigator.clipboard.readText());
+    } catch {
+      setError("Couldn't read the clipboard. Long-press the box below and choose Paste.");
+    }
+  }
+
+  function useReply() {
+    try {
+      const e = parseClaudeReply(reply);
+      onUse({
+        origin: "ai",
+        sources: [],
+        notes: e.notes,
+        combineAs: text.trim() || e.mealName,
+        drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients)),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't read that reply.");
+    }
+  }
+
+  return (
+    <div className="ask-claude stack">
+      <a className="button block" href={claudeUrl(prompt)} target="_blank" rel="noreferrer" onClick={copy}>
+        Ask Claude ↗
+      </a>
+      {open && (
+        <>
+          <p className="small muted" style={{ margin: 0 }}>
+            {copied ? "The question is copied. " : ""}If Claude opens without it, paste it in. When Claude answers, copy its
+            whole reply and paste it here.
+          </p>
+          <textarea
+            rows={4}
+            value={reply}
+            onChange={(e) => {
+              setReply(e.target.value);
+              setError(null);
+            }}
+            placeholder="Paste Claude's reply"
+          />
+          {error && <div className="error">{error}</div>}
+          <div className="row">
+            <button className="grow" onClick={pasteFromClipboard}>Paste</button>
+            <button className="primary grow" disabled={!reply.trim()} onClick={useReply}>Use Claude&apos;s numbers</button>
+          </div>
+          <button className="ghost small" onClick={() => navigator.clipboard?.writeText(prompt).then(() => setCopied(true))}>
+            Copy the question again
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -334,6 +405,8 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
           {canUseAi ? "Use quick estimate instead" : "Review & log"}
         </button>
       )}
+
+      {text.trim() && <AskClaude text={text} onUse={onUse} />}
     </section>
   );
 }
