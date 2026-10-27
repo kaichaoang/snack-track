@@ -33,6 +33,8 @@ const KEYS = {
   profile: "snacktrack.profile.v1",
   entries: "snacktrack.entries.v1",
   weights: "snacktrack.weights.v1",
+  // Deliberately not part of exportAll(), so backups never contain the key.
+  apiKey: "snacktrack.anthropicKey.v1",
 } as const;
 
 const listeners = new Set<() => void>();
@@ -107,6 +109,10 @@ export function useEntries() {
 
 export function useWeights() {
   return useStored<WeightEntry[]>(KEYS.weights, NO_WEIGHTS);
+}
+
+export function useApiKey() {
+  return useStored<string>(KEYS.apiKey, "");
 }
 
 export function newId(): string {

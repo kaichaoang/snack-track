@@ -2,10 +2,11 @@
 
 import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
-import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot } from "@/lib/store";
+import { defaultMealSlot, MEAL_SLOTS, newId, useApiKey, type FoodEntry, type MealSlot } from "@/lib/store";
 import { resizeImage } from "@/lib/image";
-import type { Estimate, EstimateResponse, Source } from "@/lib/estimate-schema";
-import type { FoodResult } from "@/app/api/foods/route";
+import { estimateMeal } from "@/lib/estimate";
+import { searchFoods, type FoodResult } from "@/lib/foods";
+import type { Estimate, Source } from "@/lib/estimate-schema";
 
 type Mode = "snap" | "search" | "manual";
 
@@ -28,7 +29,17 @@ interface Review {
 
 const PLACE_SUGGESTIONS = ["Super Simple", "Hawker centre", "Kopitiam", "Saladstop!", "Subway", "McDonald's", "Home-cooked"];
 
-export function AddFood({ date, onSave, onCancel }: { date: string; onSave: (e: FoodEntry[]) => void; onCancel: () => void }) {
+export function AddFood({
+  date,
+  onSave,
+  onCancel,
+  onOpenSettings,
+}: {
+  date: string;
+  onSave: (e: FoodEntry[]) => void;
+  onCancel: () => void;
+  onOpenSettings: () => void;
+}) {
   const [mode, setMode] = useState<Mode>("snap");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());
   const [place, setPlace] = useState("");
@@ -69,7 +80,7 @@ export function AddFood({ date, onSave, onCancel }: { date: string; onSave: (e: 
             <button aria-pressed={mode === "search"} onClick={() => setMode("search")}>🔎 Packaged</button>
             <button aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>✏️ Manual</button>
           </div>
-          {mode === "snap" && <SnapPanel place={place} setPlace={setPlace} onResult={setReview} />}
+          {mode === "snap" && <SnapPanel place={place} setPlace={setPlace} onResult={setReview} onOpenSettings={onOpenSettings} />}
           {mode === "search" && <SearchPanel onPick={setReview} />}
           {mode === "manual" && (
             <section className="card">
@@ -113,11 +124,14 @@ function SnapPanel({
   place,
   setPlace,
   onResult,
+  onOpenSettings,
 }: {
   place: string;
   setPlace: (s: string) => void;
   onResult: (r: Review) => void;
+  onOpenSettings: () => void;
 }) {
+  const [apiKey] = useApiKey();
   const fileRef = useRef<HTMLInputElement>(null);
   const [photo, setPhoto] = useState<{ data: string; mediaType: "image/jpeg"; previewUrl: string } | null>(null);
   const [description, setDescription] = useState("");
@@ -139,18 +153,12 @@ function SnapPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/estimate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: photo ? { data: photo.data, mediaType: photo.mediaType } : undefined,
-          description: description.trim() || undefined,
-          place: place.trim() || undefined,
-          lookup,
-        }),
+      const body = await estimateMeal(apiKey, {
+        image: photo ? { data: photo.data, mediaType: photo.mediaType } : undefined,
+        description: description.trim() || undefined,
+        place: place.trim() || undefined,
+        lookup,
       });
-      const body = (await res.json()) as EstimateResponse | { error: string };
-      if (!res.ok || "error" in body) throw new Error("error" in body ? body.error : `Error ${res.status}`);
       onResult({
         origin: "ai",
         estimate: body.estimate,
@@ -170,6 +178,19 @@ function SnapPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!apiKey) {
+    return (
+      <section className="card stack">
+        <p style={{ margin: 0 }}>
+          Photo and description estimates use Claude, which needs your own Anthropic API key. The key is stored only in this
+          browser.
+        </p>
+        <button className="primary block" onClick={onOpenSettings}>Add API key</button>
+        <p className="muted small" style={{ margin: 0 }}>You can still use Packaged search and Manual entry without one.</p>
+      </section>
+    );
   }
 
   return (
@@ -247,11 +268,7 @@ function SearchPanel({ onPick }: { onPick: (r: Review) => void }) {
     setBusy(true);
     setError(null);
     try {
-      const param = /^\d{8,14}$/.test(term) ? `barcode=${term}` : `q=${encodeURIComponent(term)}`;
-      const res = await fetch(`/api/foods?${param}`);
-      const body = (await res.json()) as { results?: FoodResult[]; error?: string };
-      if (!res.ok) throw new Error(body.error ?? "Search failed");
-      setResults(body.results ?? []);
+      setResults(await searchFoods(term));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
     } finally {

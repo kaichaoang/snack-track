@@ -1,13 +1,11 @@
-// Packaged-food lookup via Open Food Facts (public, crowd-sourced database).
-// GET /api/foods?q=milo            -> name search
-// GET /api/foods?barcode=888...    -> exact product
+"use client";
 
-import type { Nutrients } from "@/lib/nutrition";
+// Packaged-food lookup via Open Food Facts (public, crowd-sourced database),
+// called from the browser; the API allows cross-origin requests.
 
-export const runtime = "nodejs";
+import type { Nutrients } from "./nutrition";
 
 const OFF = "https://world.openfoodfacts.org";
-const HEADERS = { "User-Agent": "SnackTrack/0.1 (personal food tracker)" };
 const FIELDS = "code,product_name,brands,serving_size,serving_quantity,nutriments";
 
 export interface FoodResult {
@@ -62,39 +60,36 @@ function toResult(p: OffProduct): FoodResult | null {
   };
 }
 
-export async function GET(request: Request) {
-  const params = new URL(request.url).searchParams;
-  const barcode = params.get("barcode")?.replace(/\D/g, "");
-  const q = params.get("q")?.trim();
-
+/** Search by product name, or by barcode when the query is all digits. */
+export async function searchFoods(query: string): Promise<FoodResult[]> {
+  const term = query.trim();
+  const barcode = /^\d{8,14}$/.test(term) ? term : null;
+  let res: Response;
   try {
     if (barcode) {
-      const res = await fetch(`${OFF}/api/v2/product/${barcode}.json?fields=${FIELDS}`, { headers: HEADERS });
-      if (!res.ok) return Response.json({ results: [] });
-      const data = (await res.json()) as { product?: OffProduct };
-      const r = data.product ? toResult({ code: barcode, ...data.product }) : null;
-      return Response.json({ results: r ? [r] : [] });
-    }
-
-    if (q) {
+      res = await fetch(`${OFF}/api/v2/product/${barcode}.json?fields=${FIELDS}`);
+      if (res.status === 404) return [];
+    } else {
       const url = new URL(`${OFF}/cgi/search.pl`);
       url.search = new URLSearchParams({
-        search_terms: q,
+        search_terms: term,
         search_simple: "1",
         json: "1",
         page_size: "15",
         fields: FIELDS,
       }).toString();
-      const res = await fetch(url, { headers: HEADERS });
-      if (!res.ok) return Response.json({ error: "Food database is unavailable." }, { status: 502 });
-      const data = (await res.json()) as { products?: OffProduct[] };
-      const results = (data.products ?? []).map(toResult).filter((r): r is FoodResult => r !== null);
-      return Response.json({ results });
+      res = await fetch(url);
     }
-
-    return Response.json({ error: "Pass q or barcode." }, { status: 400 });
-  } catch (error) {
-    console.error(error);
-    return Response.json({ error: "Food database is unavailable." }, { status: 502 });
+  } catch {
+    throw new Error("Food database is unavailable.");
   }
+  if (!res.ok) throw new Error("Food database is unavailable.");
+
+  if (barcode) {
+    const data = (await res.json()) as { product?: OffProduct };
+    const r = data.product ? toResult({ code: barcode, ...data.product }) : null;
+    return r ? [r] : [];
+  }
+  const data = (await res.json()) as { products?: OffProduct[] };
+  return (data.products ?? []).map(toResult).filter((r): r is FoodResult => r !== null);
 }

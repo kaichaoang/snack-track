@@ -1,31 +1,23 @@
+"use client";
+
+// Meal estimates, called straight from the browser with the user's own
+// Anthropic API key (the app is a static site with no server of its own).
+
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { z } from "zod";
-import { EstimateSchema, type EstimateResponse, type Source } from "@/lib/estimate-schema";
-
-export const runtime = "nodejs";
-export const maxDuration = 120;
+import { EstimateSchema, type EstimateResponse, type Source } from "./estimate-schema";
 
 const MODEL = "claude-opus-5-5";
 // Route a safety-classifier decline to the server's default fallback model
 // instead of failing the request.
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["server-side-fallback-2026-07-01"];
 
-const RequestSchema = z.object({
-  image: z
-    .object({
-      data: z.string().min(1),
-      mediaType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
-    })
-    .optional(),
-  description: z.string().max(2000).optional(),
-  place: z.string().max(200).optional(),
-  lookup: z.boolean().default(true),
-});
-
-type EstimateRequest = z.infer<typeof RequestSchema>;
-
-const client = new Anthropic();
+export interface EstimateRequest {
+  image?: { data: string; mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" };
+  description?: string;
+  place?: string;
+  lookup: boolean;
+}
 
 function userContent(req: EstimateRequest, extra: string): Anthropic.Beta.BetaContentBlockParam[] {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
@@ -63,7 +55,7 @@ Return one entry per distinct food or drink in the meal.
 - Sodium is in milligrams. If a value is unknown, give your best estimate rather than 0.
 - Set confidence to "high" only when official figures matched the exact item and portion.`;
 
-async function research(req: EstimateRequest): Promise<{ text: string; sources: Source[] }> {
+async function research(client: Anthropic, req: EstimateRequest): Promise<{ text: string; sources: Source[] }> {
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     { role: "user", content: userContent(req, "Find the nutrition facts for this meal.") },
   ];
@@ -102,7 +94,7 @@ async function research(req: EstimateRequest): Promise<{ text: string; sources: 
     }
 
     if (response.stop_reason === "refusal") {
-      throw new EstimateError("The lookup was declined. Try describing the meal differently.", 422);
+      throw new Error("The lookup was declined. Try describing the meal differently.");
     }
     if (response.stop_reason !== "pause_turn") break;
     messages.push({ role: "assistant", content: response.content });
@@ -111,29 +103,15 @@ async function research(req: EstimateRequest): Promise<{ text: string; sources: 
   return { text: text.trim(), sources: [...sources.values()].slice(0, 6) };
 }
 
-class EstimateError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-  }
-}
+/** Runs the (optional) web lookup, then the structured estimate. Throws Error with a user-facing message. */
+export async function estimateMeal(apiKey: string, req: EstimateRequest): Promise<EstimateResponse> {
+  if (!apiKey) throw new Error("Add your Anthropic API key in the Goals tab first.");
+  if (!req.image && !req.description?.trim()) throw new Error("Add a photo or a description.");
 
-export async function POST(request: Request) {
-  let req: EstimateRequest;
-  try {
-    req = RequestSchema.parse(await request.json());
-  } catch {
-    return Response.json({ error: "Invalid request." }, { status: 400 });
-  }
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    return Response.json({ error: "Server is missing ANTHROPIC_API_KEY. Add it to .env.local." }, { status: 500 });
-  }
-  if (!req.image && !req.description?.trim()) {
-    return Response.json({ error: "Add a photo or a description." }, { status: 400 });
-  }
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
 
   try {
-    let notes: { text: string; sources: Source[] } | null = null;
-    if (req.lookup) notes = await research(req);
+    const notes = req.lookup ? await research(client, req) : null;
 
     const extra = notes?.text
       ? `Research notes from a web lookup:\n<research>\n${notes.text}\n</research>\n\nEstimate the nutrition of this meal.`
@@ -150,36 +128,31 @@ export async function POST(request: Request) {
     });
 
     if (response.stop_reason === "refusal") {
-      throw new EstimateError("The estimate was declined. Try describing the meal differently.", 422);
+      throw new Error("The estimate was declined. Try describing the meal differently.");
     }
-    if (!response.parsed_output) {
-      throw new EstimateError("Couldn't read the estimate. Please try again.", 502);
-    }
+    if (!response.parsed_output) throw new Error("Couldn't read the estimate. Please try again.");
 
-    const body: EstimateResponse = {
+    return {
       estimate: response.parsed_output,
       sources: notes?.sources ?? [],
       research: notes?.text || null,
     };
-    return Response.json(body);
   } catch (error) {
-    if (error instanceof EstimateError) {
-      return Response.json({ error: error.message }, { status: error.status });
-    }
     if (error instanceof Anthropic.AuthenticationError) {
-      return Response.json({ error: "Server is missing a valid ANTHROPIC_API_KEY." }, { status: 500 });
+      throw new Error("Your Anthropic API key was rejected. Check it in the Goals tab.");
+    }
+    if (error instanceof Anthropic.PermissionDeniedError) {
+      throw new Error("Your API key isn't allowed to use this model or web search.");
     }
     if (error instanceof Anthropic.RateLimitError) {
-      return Response.json({ error: "Rate limited. Wait a moment and retry." }, { status: 429 });
+      throw new Error("Rate limited. Wait a moment and retry.");
     }
     if (error instanceof Anthropic.APIConnectionError) {
-      return Response.json({ error: "Couldn't reach the AI service. Check your connection." }, { status: 502 });
+      throw new Error("Couldn't reach the AI service. Check your connection.");
     }
     if (error instanceof Anthropic.APIError) {
-      console.error("Anthropic API error", error.status, error.message);
-      return Response.json({ error: `AI service error (${error.status}).` }, { status: 502 });
+      throw new Error(`AI service error (${error.status}): ${error.message}`);
     }
-    console.error(error);
-    return Response.json({ error: "Something went wrong estimating this meal." }, { status: 500 });
+    throw error;
   }
 }

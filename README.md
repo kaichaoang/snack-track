@@ -13,33 +13,42 @@ A mobile-first food tracker for losing weight with a calorie deficit. Snap a pho
 - **Progress view.** Weigh-ins with a smoothed trend line (so water swings don't mislead you), 14 days of calories vs. target and maintenance, average deficit, estimated fat lost and a projected goal date.
 - **Private by default.** All data stays in your browser's localStorage. Export/import a JSON backup from the Goals tab.
 
-## Run it
+**Live app:** https://kaichaoang.github.io/snack-track/
+
+## Use it
+
+1. Open https://kaichaoang.github.io/snack-track/ on your phone and set your goal.
+2. In **Goals → Anthropic API key**, paste a key from [console.anthropic.com](https://console.anthropic.com/settings/keys). Setting a monthly spend limit there is a good idea.
+3. Use "Add to Home Screen" to install it like an app. The camera button opens the camera directly.
+
+The app is a static site with no server of its own. Claude and Open Food Facts are called directly from your browser. Your key is stored only in that browser's localStorage, is sent only to `api.anthropic.com`, and is never included in backups. Packaged-food search and manual entry work without a key.
+
+## Develop
 
 ```bash
 npm install
-cp .env.example .env.local   # then put your Anthropic API key in it
-npm run dev                  # http://localhost:3000
+npm run dev     # http://localhost:3000
 ```
 
-To use it on your phone, open the dev server's LAN address, or deploy it (e.g. Vercel with `ANTHROPIC_API_KEY` set). The camera button opens the camera directly on mobile. "Add to Home Screen" installs it like an app.
+## Deploy (GitHub Pages)
+
+`.github/workflows/pages.yml` runs the tests, builds a static export (`out/`) with the `/snack-track` base path and publishes it on every push to `main`. One-time setup: **repo Settings → Pages → Build and deployment → Source: GitHub Actions**.
 
 ## How estimates work
 
-`POST /api/estimate` (`app/api/estimate/route.ts`) makes two Claude calls (`claude-opus-5-5`):
+`lib/estimate.ts` makes two Claude calls (`claude-opus-5-5`):
 
 1. **Research** (only when lookup is on): identifies the dish from the photo/description and uses the `web_search` server tool to find published figures, noting each source's serving size.
 2. **Estimate**: takes the photo, your description and the research notes and returns structured JSON (`lib/estimate-schema.ts`). Published figures are scaled to the portion shown. Otherwise portions are judged visually, counting hidden calories from oil, sauces and drinks.
 
-Both calls have server-side refusal fallback enabled (`fallbacks: "default"`).
-
-Photos are downscaled to 1280 px JPEG in the browser before upload.
+Both calls have server-side refusal fallback enabled (`fallbacks: "default"`). Photos are downscaled to 1280 px JPEG in the browser before sending.
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Dev server |
-| `npm run build` / `npm start` | Production build / serve |
+| `npm run build` | Static export to `out/` |
 | `npm test` | Unit tests for the nutrition math (`lib/nutrition.test.ts`) |
 | `npm run typecheck` | TypeScript check |
 
