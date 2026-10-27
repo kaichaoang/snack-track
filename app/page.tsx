@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { localDateKey, targets } from "@/lib/nutrition";
 import { exportAll, importAll, useEntries, useProfile, useWeights, type WeightEntry } from "@/lib/store";
+import { addEntries, deleteEntry, deleteWeight, putWeight, saveProfile, startSync, uploadAll, useSession, useSyncStatus } from "@/lib/sync";
+import { AccountCard } from "@/components/AccountCard";
 import { ProfileForm } from "@/components/ProfileForm";
 import { TodayView } from "@/components/TodayView";
 import { AddFood } from "@/components/AddFood";
@@ -20,13 +22,16 @@ const ICONS: Record<Tab, React.ReactNode> = {
 const LABELS: Record<Tab, string> = { today: "Today", add: "Add", progress: "Progress", settings: "Goals" };
 
 export default function Home() {
-  const [profile, setProfile] = useProfile();
-  const [entries, setEntries] = useEntries();
-  const [weights, setWeights] = useWeights();
+  const [profile] = useProfile();
+  const [entries] = useEntries();
+  const [weights] = useWeights();
+  const [session] = useSession();
+  const syncStatus = useSyncStatus();
   const [tab, setTab] = useState<Tab>("today");
   const [date, setDate] = useState(localDateKey());
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  useEffect(() => startSync(), []);
 
   // localStorage is only available after mount; avoid flashing onboarding.
   if (!mounted) return <main className="app" />;
@@ -44,11 +49,13 @@ export default function Home() {
             initial={null}
             submitLabel="Start tracking"
             onSave={(p) => {
-              setProfile(p);
-              setWeights([{ date: localDateKey(), kg: p.weightKg }]);
+              saveProfile(p);
+              putWeight({ date: localDateKey(), kg: p.weightKg });
             }}
           />
         </section>
+        <p className="muted small">Already use SnackTrack (or SplitDumb)? Sign in to load your goal and history.</p>
+        <AccountCard />
       </main>
     );
   }
@@ -56,16 +63,21 @@ export default function Home() {
   const t = targets(profile);
 
   const logWeight = (w: WeightEntry) => {
-    setWeights((prev) => [...prev.filter((x) => x.date !== w.date), w]);
+    putWeight(w);
     // Keep targets in step with current weight.
-    setProfile({ ...profile, weightKg: w.kg });
+    saveProfile({ ...profile, weightKg: w.kg });
   };
 
   return (
     <main className="app">
       <header className="top">
         <h1>SnackTrack</h1>
-        <span className="sub num">{Math.round(t.calories)} kcal/day target</span>
+        <span className="sub num">
+          {Math.round(t.calories)} kcal/day target
+          {session && syncStatus !== "synced" && syncStatus !== "local" && (
+            <span title="Cloud sync" style={{ marginLeft: 6 }}>{syncStatus === "error" ? "⚠︎" : "⟳"}</span>
+          )}
+        </span>
       </header>
 
       {tab === "today" && (
@@ -74,7 +86,7 @@ export default function Home() {
           setDate={setDate}
           entries={entries}
           t={t}
-          onDelete={(id) => setEntries((prev) => prev.filter((e) => e.id !== id))}
+          onDelete={deleteEntry}
           onAdd={() => setTab("add")}
         />
       )}
@@ -86,7 +98,7 @@ export default function Home() {
           onCancel={() => setTab("today")}
           onOpenSettings={() => setTab("settings")}
           onSave={(added) => {
-            setEntries((prev) => [...prev, ...added]);
+            addEntries(added);
             setTab("today");
           }}
         />
@@ -99,7 +111,7 @@ export default function Home() {
           entries={entries}
           weights={weights}
           onLogWeight={logWeight}
-          onDeleteWeight={(d) => setWeights((prev) => prev.filter((w) => w.date !== d))}
+          onDeleteWeight={deleteWeight}
         />
       )}
 
@@ -107,13 +119,16 @@ export default function Home() {
         <>
           <section className="card">
             <h2>Your goal</h2>
-            <ProfileForm initial={profile} onSave={(p) => { setProfile(p); setTab("today"); }} />
+            <ProfileForm initial={profile} onSave={(p) => { saveProfile(p); setTab("today"); }} />
           </section>
+          <AccountCard />
           <GeminiCard />
           <section className="card stack">
             <h2>Your data</h2>
             <p className="muted small" style={{ margin: 0 }}>
-              Everything is stored only in this browser. Export a backup to move it to another device.
+              {session
+                ? "Your data is saved to your account. You can also export a backup file."
+                : "Without an account, everything is stored only in this browser. Export a backup to keep a copy."}
             </p>
             <div className="row">
               <button
@@ -139,6 +154,7 @@ export default function Home() {
                     if (!f) return;
                     try {
                       importAll(await f.text());
+                      uploadAll();
                     } catch {
                       alert("That file isn't a SnackTrack backup.");
                     }

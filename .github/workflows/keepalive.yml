@@ -1,0 +1,30 @@
+name: Keep Supabase awake
+
+# Free Supabase projects pause after 7 days without activity. This runs a
+# trivial query (public.keepalive() = SELECT 1) every 3 days. The project is
+# shared with SplitDumb, so this keeps both apps' database awake.
+
+on:
+  schedule:
+    - cron: "17 3 */3 * *" # 03:17 UTC every 3rd day
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SELECT 1
+        env:
+          SUPABASE_URL: https://esnphmnqxbdeygwrusjv.supabase.co
+          # Publishable key: public by design, it can only call the exposed functions.
+          SUPABASE_KEY: sb_publishable_SxXrDDCnLcnK5Jw1pgjGng_BMQcI6ow
+        run: |
+          for i in 1 2 3; do
+            out=$(curl -sS --fail-with-body -X POST "$SUPABASE_URL/rest/v1/rpc/keepalive" \
+              -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
+              -H "Content-Type: application/json" -d '{}') && [ "$out" = "1" ] && { echo "Database awake (got $out)"; exit 0; }
+            echo "Attempt $i failed: $out"; sleep 20
+          done
+          exit 1

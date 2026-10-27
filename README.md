@@ -14,7 +14,7 @@ A free, mobile-first food tracker for losing weight with a calorie deficit. Desc
 - **Review before logging.** Edit any number, add items, and scale the portion from ×0.5 to ×2.
 - **Today view.** Calories-left ring, macro bars, and the log grouped by meal. Step back to earlier days to log them late.
 - **Progress view.** Weigh-ins with a smoothed trend line (so water swings don't mislead you), 14 days of calories vs. target and maintenance, average deficit, estimated fat lost and a projected goal date.
-- **Private by default.** All data stays in your browser's localStorage. Export/import a JSON backup from the Goals tab.
+- **Cloud history (optional).** Sign in under **Goals → Account & sync** (same username and password as SplitDumb) and your log, weigh-ins and goal are saved to Supabase and synced across devices. The app keeps a local copy, so it stays fast and works offline; changes are queued and sent when you're back online. Anything logged before signing in is uploaded at first sign-in. Without an account everything stays in the browser, and you can export/import a JSON backup.
 
 **Live app:** https://kaichaoang.github.io/snack-track/
 
@@ -24,7 +24,13 @@ A free, mobile-first food tracker for losing weight with a calorie deficit. Desc
 2. Optional: get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it under **Goals → AI meal estimates**.
 3. Use "Add to Home Screen" to install it like an app.
 
-The app is a static site with no server of its own. Gemini and Open Food Facts are called directly from your browser; everything else works offline. The Gemini key is stored only in that browser's localStorage and never included in backups.
+The app is a static site with no server of its own. Gemini, Open Food Facts and Supabase are called directly from your browser; everything else works offline. The Gemini key is stored only in that browser's localStorage and is never synced or included in backups.
+
+## Database (Supabase)
+
+SnackTrack shares the SplitDumb Supabase project (`esnphmnqxbdeygwrusjv`) and its accounts (`app_users`, `sessions`). Its own tables are `snack_profiles`, `snack_entries` and `snack_weights`, created by `supabase/migrations/`. As in SplitDumb, the tables have RLS on with no policies and no grants, so the publishable key in `lib/sync.ts` can't read them; the app calls `SECURITY DEFINER` functions (`snack_load`, `snack_upsert_entries`, …) that check the session token.
+
+**Keep-alive:** free Supabase projects pause after 7 days without activity. `.github/workflows/keepalive.yml` calls `public.keepalive()` (`SELECT 1`) every 3 days, which keeps the shared project (SplitDumb too) awake. GitHub turns off scheduled workflows in a repo with no commits for 60 days; if that happens, re-enable it under **Actions → Keep Supabase awake**.
 
 ## Develop
 
@@ -39,6 +45,7 @@ npm run dev     # http://localhost:3000
 
 ## Where the numbers come from
 
+- `lib/sync.ts`: Supabase sync (sign-in, offline queue, pull on open).
 - `lib/gemini.ts`: the Gemini request (Google Search tool, optional photo) and the parser for its JSON reply.
 - `lib/ingredients.ts`: typical cooked values per default portion for each ingredient, rounded from common food-composition data (USDA FoodData Central / Singapore HPB), plus dish templates that expand into ingredients. `lib/describe.ts` is the parser.
 - `lib/dishes.ts`: typical values for one standard serving, rounded from widely published Singapore dish figures (e.g. Health Promotion Board data). Saturated fat is derived as ~35% of total fat. Portions vary by stall, so treat them as starting points.

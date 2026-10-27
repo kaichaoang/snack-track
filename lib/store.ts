@@ -1,7 +1,7 @@
 "use client";
 
-// Browser-local persistence. Everything lives in localStorage on this device;
-// there is no account or server-side database.
+// Browser-local persistence. localStorage is the app's working copy; when you
+// sign in, lib/sync.ts mirrors changes to Supabase and pulls them back.
 
 import { useCallback, useSyncExternalStore } from "react";
 import type { Nutrients, Profile } from "./nutrition";
@@ -33,7 +33,7 @@ export interface WeightEntry {
   kg: number;
 }
 
-const KEYS = {
+export const KEYS = {
   profile: "snacktrack.profile.v1",
   entries: "snacktrack.entries.v1",
   weights: "snacktrack.weights.v1",
@@ -41,6 +41,10 @@ const KEYS = {
   geminiKey: "snacktrack.geminiKey.v1",
   geminiModel: "snacktrack.geminiModel.v1",
   geminiModels: "snacktrack.geminiModels.v1",
+  // Cloud sync (lib/sync.ts). Not part of exportAll().
+  session: "snacktrack.session.v1",
+  syncQueue: "snacktrack.syncQueue.v1",
+  syncStatus: "snacktrack.syncStatus.v1",
 } as const;
 
 // Earlier versions stored an Anthropic API key; remove it if present.
@@ -53,7 +57,7 @@ try {
 const listeners = new Set<() => void>();
 const cache = new Map<string, { raw: string | null; value: unknown }>();
 
-function read<T>(key: string, fallback: T): T {
+export function read<T>(key: string, fallback: T): T {
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(key);
@@ -74,7 +78,7 @@ function read<T>(key: string, fallback: T): T {
   return value;
 }
 
-function write<T>(key: string, value: T) {
+export function write<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {
@@ -93,7 +97,7 @@ function subscribe(cb: () => void) {
   };
 }
 
-function useStored<T>(key: string, fallback: T): [T, (next: T | ((prev: T) => T)) => void] {
+export function useStored<T>(key: string, fallback: T): [T, (next: T | ((prev: T) => T)) => void] {
   const value = useSyncExternalStore(
     subscribe,
     () => read(key, fallback),
