@@ -1,5 +1,5 @@
--- Deleting an entry hides it instead of erasing it, so accidental deletes can be recovered.
--- Run in the Supabase SQL Editor (safe to run more than once).
+-- Deleting an entry hides it (deleted_at) instead of erasing it, so accidental deletes can be recovered.
+-- Applied 2026-10-28; kept here as the record of the schema.
 alter table public.snack_entries add column if not exists deleted_at timestamptz;
 
 create or replace function public.snack_delete_entry(p_token text, p_id text)
@@ -8,8 +8,6 @@ set search_path to 'public', 'extensions', 'pg_temp' as $$
 declare uid uuid := auth_user(p_token);
 begin
   update snack_entries set deleted_at = now() where user_id = uid and id = p_id and deleted_at is null;
-  -- Erase entries deleted more than 30 days ago.
-  delete from snack_entries where user_id = uid and deleted_at < now() - interval '30 days';
   return true;
 end $$;
 
