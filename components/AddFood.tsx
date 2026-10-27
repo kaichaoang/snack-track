@@ -5,8 +5,9 @@ import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@
 import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
 import { searchFoods, type FoodResult } from "@/lib/foods";
 import { searchDishes } from "@/lib/dishes";
+import { describeMeal } from "@/lib/describe";
 
-type Mode = "dishes" | "packaged" | "manual";
+type Mode = "describe" | "dishes" | "packaged" | "manual";
 
 interface Draft {
   key: string;
@@ -20,6 +21,8 @@ interface Review {
   origin: FoodEntry["origin"];
   drafts: Draft[];
   sources: Source[];
+  /** Log all included items as one entry with this name (free-text meals). */
+  combineAs?: string;
 }
 
 const PLACE_SUGGESTIONS = ["Super Simple", "Hawker centre", "Kopitiam", "Saladstop!", "Subway", "McDonald's", "Home-cooked"];
@@ -43,7 +46,7 @@ export function AddFood({
   onSave: (e: FoodEntry[]) => void;
   onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<Mode>("dishes");
+  const [mode, setMode] = useState<Mode>("describe");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());
   const [place, setPlace] = useState("");
   const [review, setReview] = useState<Review | null>(null);
@@ -52,6 +55,23 @@ export function AddFood({
   function save() {
     if (!review) return;
     const now = Date.now();
+    const included = review.drafts.filter((d) => d.include);
+    if (review.combineAs && included.length) {
+      onSave([
+        {
+          id: newId(),
+          date,
+          createdAt: now,
+          meal,
+          name: review.combineAs,
+          portion: (multiplier === 1 ? "" : `×${multiplier} · `) + included.map((d) => d.name.split(" (")[0]).join(", "),
+          nutrients: scaleNutrients(sumNutrients(included.map((d) => d.nutrients)), multiplier),
+          origin: review.origin,
+          place: place.trim() || undefined,
+        },
+      ]);
+      return;
+    }
     const added: FoodEntry[] = review.drafts
       .filter((d) => d.include)
       .map((d, i) => ({
@@ -84,17 +104,24 @@ export function AddFood({
 
       {!review && (
         <>
-          <RecentPanel entries={entries} onPick={relog} />
           <div className="seg" role="group" aria-label="How to add" style={{ marginBottom: 12 }}>
-            <button aria-pressed={mode === "dishes"} onClick={() => setMode("dishes")}>🍜 Dishes</button>
-            <button aria-pressed={mode === "packaged"} onClick={() => setMode("packaged")}>🔎 Packaged</button>
-            <button aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>✏️ Manual</button>
+            <button aria-pressed={mode === "describe"} onClick={() => setMode("describe")}>Describe</button>
+            <button aria-pressed={mode === "dishes"} onClick={() => setMode("dishes")}>Dishes</button>
+            <button aria-pressed={mode === "packaged"} onClick={() => setMode("packaged")}>Packaged</button>
+            <button aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>Manual</button>
           </div>
+          {mode === "describe" && (
+            <DescribePanel
+              onUse={(text, drafts) => setReview({ origin: "described", sources: [], drafts, combineAs: text })}
+              onManual={() => setMode("manual")}
+            />
+          )}
           {mode === "dishes" && (
             <DishPanel onPick={(d) => setReview({ origin: "dish", sources: [], drafts: [d] })} />
           )}
           {mode === "packaged" && <PackagedPanel onPick={setReview} />}
           {mode === "manual" && <ManualPanel place={place} setPlace={setPlace} onStart={setReview} />}
+          <RecentPanel entries={entries} onPick={relog} />
         </>
       )}
 
@@ -145,6 +172,68 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
           </div>
         </button>
       ))}
+    </section>
+  );
+}
+
+function DescribePanel({ onUse, onManual }: { onUse: (text: string, drafts: Draft[]) => void; onManual: () => void }) {
+  const [text, setText] = useState("");
+  const { items, unmatched } = describeMeal(text);
+  const total = sumNutrients(items.map((i) => i.nutrients));
+  return (
+    <section className="card stack">
+      <label className="field">
+        <span>Describe what you ate, the way you&apos;d say it</span>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="e.g. grouper fish soup with less rice, a little sauce, some soup"
+          autoFocus
+        />
+      </label>
+      <p className="muted small" style={{ margin: 0 }}>
+        Words like <i>less</i>, <i>a little</i>, <i>some</i>, <i>extra</i>, <i>no</i>, <i>2 eggs</i> or <i>150g chicken</i> adjust
+        each part. Works offline.
+      </p>
+      {items.length > 0 && (
+        <div>
+          {items.map((i) => (
+            <div className="entry" key={i.id}>
+              <div className="grow">
+                <div className="name">{i.name}</div>
+                <div className="meta">{i.amount}</div>
+              </div>
+              <span className="kcal">{Math.round(i.nutrients.calories)}</span>
+            </div>
+          ))}
+          <div className="row between" style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+            <b>Total</b>
+            <b className="num">{Math.round(total.calories)} kcal</b>
+          </div>
+          <div className="small muted num">
+            P {Math.round(total.proteinG)} g · C {Math.round(total.carbsG)} g · F {Math.round(total.fatG)} g
+          </div>
+        </div>
+      )}
+      {unmatched.length > 0 && (
+        <div className="small" style={{ color: "var(--warn)" }}>
+          Didn&apos;t recognise: {unmatched.join(", ")}. Add it as an item on the next screen, or use{" "}
+          <button className="ghost small" style={{ padding: 0, color: "var(--accent)" }} onClick={onManual}>Manual</button> for
+          restaurant figures.
+        </div>
+      )}
+      <button
+        className="primary block"
+        disabled={!text.trim()}
+        onClick={() =>
+          onUse(
+            text.trim(),
+            items.map((i) => draft(i.name, i.amount, i.nutrients)),
+          )
+        }
+      >
+        Review &amp; log
+      </button>
     </section>
   );
 }
@@ -351,7 +440,8 @@ function ReviewPanel({
         <div className="small muted num">
           Protein {total.proteinG.toFixed(0)} g · Carbs {total.carbsG.toFixed(0)} g · Fat {total.fatG.toFixed(0)} g · Fibre {total.fiberG.toFixed(0)} g
         </div>
-        {review.origin === "dish" && (
+        {review.combineAs && <p style={{ margin: "6px 0 0" }}>“{review.combineAs}”</p>}
+        {(review.origin === "dish" || review.origin === "described") && (
           <p className="small muted" style={{ marginBottom: 0 }}>Typical values. Adjust the portion if yours was bigger or smaller.</p>
         )}
         {review.sources.length > 0 && (

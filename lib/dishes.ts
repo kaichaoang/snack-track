@@ -3,7 +3,7 @@
 // figures (e.g. Health Promotion Board dish data); portions vary by stall, so
 // the review screen lets the user edit and scale them.
 
-import type { Nutrients } from "./nutrition";
+import type { Nutrients } from "./nutrition.ts";
 
 export interface Dish {
   name: string;

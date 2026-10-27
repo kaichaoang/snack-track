@@ -23,7 +23,7 @@ export interface FoodEntry {
   name: string;
   portion: string;
   nutrients: Nutrients;
-  origin: "dish" | "database" | "manual";
+  origin: "described" | "dish" | "database" | "manual";
   place?: string;
   sources?: Source[];
 }

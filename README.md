@@ -1,10 +1,11 @@
 # SnackTrack
 
-A free, mobile-first food tracker for losing weight with a calorie deficit. Log meals from a built-in list of common Singapore dishes, the Open Food Facts packaged-food database, or figures you look up yourself (e.g. a restaurant's published nutrition facts). No account, no API keys, no running costs.
+A free, mobile-first food tracker for losing weight with a calorie deficit. Describe a meal the way you'd say it ("grouper fish soup with less rice, a little sauce, some soup") and it itemises and estimates it, offline. You can also pick from common Singapore dishes, search packaged foods, or type in a restaurant's published figures. No account, no API keys, no running costs.
 
 ## Features
 
 - **Goal-based targets.** Works out your maintenance calories (Mifflin–St Jeor × activity) and sets a daily target for your chosen loss rate (0.25–1 kg/week, 7700 kcal ≈ 1 kg). The target never goes below 1200 kcal for women or 1500 kcal for men. Protein (1.8 g/kg), fat, carb and fibre targets follow from it, plus upper limits for sugar, saturated fat and sodium.
+- **Describe a meal in your own words.** The text is split into parts and matched against ~90 ingredients (rice, noodles, fish, chicken, tofu, vegetables, soups, sauces, drinks…), local dish templates (fish soup, chicken rice, economy rice, yong tau foo…) and the dish list. Amount words scale each part: *no* (0), *a little* (⅓), *less/some/half* (½), *extra/more* (1.5×), *double* (2×), plus numbers such as *2 eggs* or *150g chicken*. A later mention adjusts an earlier part, so "chicken rice, less rice" halves the rice. Words it doesn't know are listed so nothing is silently dropped. The meal is logged as one entry.
 - **Common Singapore dishes.** Search ~60 hawker dishes, kopitiam drinks and basics (chicken rice, laksa, kopi siew dai…) with typical per-serving values, offline.
 - **Restaurant meals.** Enter where and what you ate, tap *Find official nutrition facts* to search the web for the restaurant's published figures (e.g. Super Simple), and type them in.
 - **Recent foods.** Anything you've logged before is one tap to re-log.
@@ -36,6 +37,7 @@ npm run dev     # http://localhost:3000
 
 ## Where the numbers come from
 
+- `lib/ingredients.ts`: typical cooked values per default portion for each ingredient, rounded from common food-composition data (USDA FoodData Central / Singapore HPB), plus dish templates that expand into ingredients. `lib/describe.ts` is the parser.
 - `lib/dishes.ts`: typical values for one standard serving, rounded from widely published Singapore dish figures (e.g. Health Promotion Board data). Saturated fat is derived as ~35% of total fat. Portions vary by stall, so treat them as starting points.
 - `lib/foods.ts`: Open Food Facts product data, scaled from per-100 g values to the amount you enter.
 
@@ -45,7 +47,7 @@ npm run dev     # http://localhost:3000
 |---|---|
 | `npm run dev` | Dev server |
 | `npm run build` | Static export to `out/` |
-| `npm test` | Unit tests for the nutrition math and dish list (`lib/nutrition.test.ts`) |
+| `npm test` | Unit tests for the nutrition math, dish list and meal parser (`lib/*.test.ts`) |
 | `npm run typecheck` | TypeScript check |
 
 ## Caveats
