@@ -1,21 +1,18 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
-import { defaultMealSlot, MEAL_SLOTS, newId, useApiKey, type FoodEntry, type MealSlot } from "@/lib/store";
-import { resizeImage } from "@/lib/image";
-import { estimateMeal } from "@/lib/estimate";
+import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
 import { searchFoods, type FoodResult } from "@/lib/foods";
-import type { Estimate, Source } from "@/lib/estimate-schema";
+import { searchDishes } from "@/lib/dishes";
 
-type Mode = "snap" | "search" | "manual";
+type Mode = "dishes" | "packaged" | "manual";
 
 interface Draft {
   key: string;
   name: string;
   portion: string;
   nutrients: Nutrients;
-  basis?: string;
   include: boolean;
 }
 
@@ -23,24 +20,30 @@ interface Review {
   origin: FoodEntry["origin"];
   drafts: Draft[];
   sources: Source[];
-  estimate?: Estimate;
-  research?: string | null;
 }
 
 const PLACE_SUGGESTIONS = ["Super Simple", "Hawker centre", "Kopitiam", "Saladstop!", "Subway", "McDonald's", "Home-cooked"];
 
+const draft = (name: string, portion: string, nutrients: Nutrients): Draft => ({
+  key: newId(),
+  name,
+  portion,
+  nutrients: { ...nutrients },
+  include: true,
+});
+
 export function AddFood({
   date,
+  entries,
   onSave,
   onCancel,
-  onOpenSettings,
 }: {
   date: string;
+  entries: FoodEntry[];
   onSave: (e: FoodEntry[]) => void;
   onCancel: () => void;
-  onOpenSettings: () => void;
 }) {
-  const [mode, setMode] = useState<Mode>("snap");
+  const [mode, setMode] = useState<Mode>("dishes");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());
   const [place, setPlace] = useState("");
   const [review, setReview] = useState<Review | null>(null);
@@ -49,7 +52,7 @@ export function AddFood({
   function save() {
     if (!review) return;
     const now = Date.now();
-    const entries: FoodEntry[] = review.drafts
+    const added: FoodEntry[] = review.drafts
       .filter((d) => d.include)
       .map((d, i) => ({
         id: newId(),
@@ -63,7 +66,13 @@ export function AddFood({
         place: place.trim() || undefined,
         sources: review.sources.length ? review.sources : undefined,
       }));
-    if (entries.length) onSave(entries);
+    if (added.length) onSave(added);
+  }
+
+  function relog(e: FoodEntry) {
+    setPlace(e.place ?? "");
+    setMultiplier(1);
+    setReview({ origin: e.origin, sources: e.sources ?? [], drafts: [draft(e.name, e.portion, e.nutrients)] });
   }
 
   return (
@@ -75,30 +84,17 @@ export function AddFood({
 
       {!review && (
         <>
+          <RecentPanel entries={entries} onPick={relog} />
           <div className="seg" role="group" aria-label="How to add" style={{ marginBottom: 12 }}>
-            <button aria-pressed={mode === "snap"} onClick={() => setMode("snap")}>📷 Photo / describe</button>
-            <button aria-pressed={mode === "search"} onClick={() => setMode("search")}>🔎 Packaged</button>
+            <button aria-pressed={mode === "dishes"} onClick={() => setMode("dishes")}>🍜 Dishes</button>
+            <button aria-pressed={mode === "packaged"} onClick={() => setMode("packaged")}>🔎 Packaged</button>
             <button aria-pressed={mode === "manual"} onClick={() => setMode("manual")}>✏️ Manual</button>
           </div>
-          {mode === "snap" && <SnapPanel place={place} setPlace={setPlace} onResult={setReview} onOpenSettings={onOpenSettings} />}
-          {mode === "search" && <SearchPanel onPick={setReview} />}
-          {mode === "manual" && (
-            <section className="card">
-              <p className="muted small" style={{ marginTop: 0 }}>Enter the numbers from a label or menu.</p>
-              <button
-                className="primary block"
-                onClick={() =>
-                  setReview({
-                    origin: "manual",
-                    sources: [],
-                    drafts: [{ key: newId(), name: "", portion: "1 serving", nutrients: { ...EMPTY_NUTRIENTS }, include: true }],
-                  })
-                }
-              >
-                Start
-              </button>
-            </section>
+          {mode === "dishes" && (
+            <DishPanel onPick={(d) => setReview({ origin: "dish", sources: [], drafts: [d] })} />
           )}
+          {mode === "packaged" && <PackagedPanel onPick={setReview} />}
+          {mode === "manual" && <ManualPanel place={place} setPlace={setPlace} onStart={setReview} />}
         </>
       )}
 
@@ -120,140 +116,115 @@ export function AddFood({
   );
 }
 
-function SnapPanel({
+/** Distinct foods logged before, most recent first, for one-tap re-logging. */
+function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: FoodEntry) => void }) {
+  const seen = new Set<string>();
+  const recent: FoodEntry[] = [];
+  for (const e of [...entries].sort((a, b) => b.createdAt - a.createdAt)) {
+    const k = `${e.name}|${e.portion}|${e.place ?? ""}`.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    recent.push(e);
+    if (recent.length === 8) break;
+  }
+  if (recent.length === 0) return null;
+  return (
+    <section className="card">
+      <h2>Recent</h2>
+      {recent.map((e) => (
+        <button key={e.id} className="block" style={{ textAlign: "left", marginTop: 6 }} onClick={() => onPick(e)}>
+          <div className="row between">
+            <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {e.name}
+            </span>
+            <b className="num">{Math.round(e.nutrients.calories)}</b>
+          </div>
+          <div className="small muted">
+            {e.portion}
+            {e.place ? ` · ${e.place}` : ""}
+          </div>
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function DishPanel({ onPick }: { onPick: (d: Draft) => void }) {
+  const [q, setQ] = useState("");
+  const all = searchDishes(q);
+  const results = q.trim() ? all : all.slice(0, 12);
+  return (
+    <section className="card stack">
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. chicken rice, laksa, kopi" autoFocus />
+      <p className="muted small" style={{ margin: 0 }}>
+        Typical values for one standard serving of common Singapore dishes. Portions vary by stall, so adjust on the next
+        screen.
+      </p>
+      {all.length === 0 && <p className="muted small">No match. Try Packaged or Manual.</p>}
+      {results.map((d) => (
+        <button key={d.name} className="block" style={{ textAlign: "left" }} onClick={() => onPick(draft(d.name, d.portion, d.nutrients))}>
+          <div className="row between">
+            <b className="grow">{d.name}</b>
+            <span className="num">{d.nutrients.calories}</span>
+          </div>
+          <div className="small muted">{d.portion}</div>
+        </button>
+      ))}
+      {results.length < all.length && (
+        <p className="muted small" style={{ margin: 0 }}>Type to search all {all.length} dishes.</p>
+      )}
+    </section>
+  );
+}
+
+function ManualPanel({
   place,
   setPlace,
-  onResult,
-  onOpenSettings,
+  onStart,
 }: {
   place: string;
   setPlace: (s: string) => void;
-  onResult: (r: Review) => void;
-  onOpenSettings: () => void;
+  onStart: (r: Review) => void;
 }) {
-  const [apiKey] = useApiKey();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [photo, setPhoto] = useState<{ data: string; mediaType: "image/jpeg"; previewUrl: string } | null>(null);
-  const [description, setDescription] = useState("");
-  const [lookup, setLookup] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function onFile(file: File | undefined) {
-    if (!file) return;
-    setError(null);
-    try {
-      setPhoto(await resizeImage(file));
-    } catch {
-      setError("Couldn't read that image.");
-    }
-  }
-
-  async function estimate() {
-    setBusy(true);
-    setError(null);
-    try {
-      const body = await estimateMeal(apiKey, {
-        image: photo ? { data: photo.data, mediaType: photo.mediaType } : undefined,
-        description: description.trim() || undefined,
-        place: place.trim() || undefined,
-        lookup,
-      });
-      onResult({
-        origin: "ai",
-        estimate: body.estimate,
-        sources: body.sources,
-        research: body.research,
-        drafts: body.estimate.items.map((it) => ({
-          key: newId(),
-          name: it.name,
-          portion: it.portion,
-          nutrients: it.nutrients,
-          basis: it.basis,
-          include: true,
-        })),
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Estimate failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!apiKey) {
-    return (
-      <section className="card stack">
-        <p style={{ margin: 0 }}>
-          Photo and description estimates use Claude, which needs your own Anthropic API key. The key is stored only in this
-          browser.
-        </p>
-        <button className="primary block" onClick={onOpenSettings}>Add API key</button>
-        <p className="muted small" style={{ margin: 0 }}>You can still use Packaged search and Manual entry without one.</p>
-      </section>
-    );
-  }
-
+  const [name, setName] = useState("");
+  const query = [place.trim(), name.trim(), "nutrition facts calories"].filter(Boolean).join(" ");
   return (
     <section className="card stack">
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        hidden
-        onChange={(e) => onFile(e.target.files?.[0])}
-      />
-      <div className="photo-drop" onClick={() => fileRef.current?.click()} role="button" tabIndex={0}>
-        {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={photo.previewUrl} alt="Meal photo" />
-        ) : (
-          <>
-            <div style={{ fontSize: 34 }}>📷</div>
-            <div>Take or choose a photo of your meal</div>
-            <div className="small">Optional if you describe it below</div>
-          </>
-        )}
-      </div>
-      {photo && (
-        <button className="ghost small" onClick={() => setPhoto(null)}>Remove photo</button>
-      )}
-
+      <p className="muted small" style={{ margin: 0 }}>
+        For restaurant meals (e.g. Super Simple), look up the official figures, then type them in. Next time, the meal shows
+        up under Recent.
+      </p>
       <label className="field">
-        <span>Where did you eat it? (restaurant, stall, brand)</span>
-        <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="e.g. Super Simple, Raffles Place" list="places" />
+        <span>Where</span>
+        <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="e.g. Super Simple" list="places" />
         <datalist id="places">
           {PLACE_SUGGESTIONS.map((p) => <option key={p} value={p} />)}
         </datalist>
       </label>
       <label className="field">
-        <span>What was it? Any details help</span>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="e.g. Hunter's Bowl, dressing on the side, half the rice. Plus a kopi siew dai."
-        />
+        <span>What</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hunter's Bowl" />
       </label>
-      <label className="row small" style={{ cursor: "pointer" }}>
-        <input type="checkbox" checked={lookup} onChange={(e) => setLookup(e.target.checked)} style={{ width: "auto" }} />
-        <span>Look up published nutrition facts online (slower, more accurate for chains)</span>
-      </label>
-
-      {error && <div className="error">{error}</div>}
-      <button className="primary block" disabled={busy || (!photo && !description.trim())} onClick={estimate}>
-        {busy ? (
-          <>
-            <span className="spinner" /> {lookup ? "Looking up & estimating…" : "Estimating…"}
-          </>
-        ) : (
-          "Estimate nutrients"
-        )}
+      <a
+        className="block"
+        href={`https://www.google.com/search?q=${encodeURIComponent(query)}`}
+        target="_blank"
+        rel="noreferrer"
+        style={{ textAlign: "center", padding: "10px 14px", border: "1px solid var(--border)", borderRadius: 10, textDecoration: "none" }}
+      >
+        Find official nutrition facts ↗
+      </a>
+      <button
+        className="primary block"
+        onClick={() => onStart({ origin: "manual", sources: [], drafts: [draft(name.trim(), "1 serving", EMPTY_NUTRIENTS)] })}
+      >
+        Enter numbers
       </button>
     </section>
   );
 }
 
-function SearchPanel({ onPick }: { onPick: (r: Review) => void }) {
+function PackagedPanel({ onPick }: { onPick: (r: Review) => void }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<FoodResult[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -303,16 +274,7 @@ function SearchPanel({ onPick }: { onPick: (r: Review) => void }) {
               onPick({
                 origin: "database",
                 sources: [{ title: `Open Food Facts: ${picked.name}`, url: picked.url }],
-                drafts: [
-                  {
-                    key: newId(),
-                    name: picked.brand ? `${picked.name} (${picked.brand})` : picked.name,
-                    portion: `${grams} g`,
-                    nutrients: n,
-                    basis: "database",
-                    include: true,
-                  },
-                ],
+                drafts: [draft(picked.brand ? `${picked.name} (${picked.brand})` : picked.name, `${grams} g`, n)],
               })
             }
           >
@@ -329,9 +291,7 @@ function SearchPanel({ onPick }: { onPick: (r: Review) => void }) {
         <input className="grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Product name or barcode number" />
         <button className="primary" disabled={busy}>{busy ? <span className="spinner" /> : "Search"}</button>
       </form>
-      <p className="muted small" style={{ margin: 0 }}>
-        Searches Open Food Facts, a public database of packaged foods. For restaurant meals use Photo / describe.
-      </p>
+      <p className="muted small" style={{ margin: 0 }}>Searches Open Food Facts, a free public database of packaged foods.</p>
       {error && <div className="error">{error}</div>}
       {results && results.length === 0 && <p className="muted small">No matches. Try fewer words, or the barcode.</p>}
       {results?.map((r) => (
@@ -354,8 +314,6 @@ const NUM_FIELDS: { key: keyof Nutrients; label: string }[] = [
   { key: "saturatedFatG", label: "Sat fat g" },
   { key: "sodiumMg", label: "Sodium mg" },
 ];
-
-const BASIS_LABEL: Record<string, string> = { published: "Official figures", database: "Database", visual: "Estimated from photo" };
 
 function ReviewPanel({
   review,
@@ -383,38 +341,25 @@ function ReviewPanel({
   const updateDraft = (key: string, patch: Partial<Draft>) =>
     setReview({ ...review, drafts: review.drafts.map((d) => (d.key === key ? { ...d, ...patch } : d)) });
   const total = scaleNutrients(sumNutrients(review.drafts.filter((d) => d.include).map((d) => d.nutrients)), multiplier);
-  const est = review.estimate;
 
   return (
     <>
       <section className="card">
-        <div className="row between">
-          <h2 style={{ margin: 0 }}>{est?.mealName ?? "Review"}</h2>
-          {est && <span className={`pill ${est.confidence === "high" ? "good" : est.confidence === "low" ? "warn" : ""}`}>{est.confidence} confidence</span>}
-        </div>
-        <div style={{ fontSize: "1.8rem", fontWeight: 700, marginTop: 6 }} className="num">
+        <div style={{ fontSize: "1.8rem", fontWeight: 700 }} className="num">
           {Math.round(total.calories)} <span className="muted small">kcal</span>
         </div>
         <div className="small muted num">
           Protein {total.proteinG.toFixed(0)} g · Carbs {total.carbsG.toFixed(0)} g · Fat {total.fatG.toFixed(0)} g · Fibre {total.fiberG.toFixed(0)} g
         </div>
-        {est?.notes && <p className="small" style={{ marginBottom: 0 }}>{est.notes}</p>}
-        {est?.lighterSwap && <p className="small notice" style={{ marginBottom: 0 }}>💡 Lighter next time: {est.lighterSwap}</p>}
-        {review.sources.length > 0 && (
-          <details style={{ marginTop: 8 }} open>
-            <summary>Sources</summary>
-            <ol className="sources">
-              {review.sources.map((s) => (
-                <li key={s.url}><a href={s.url} target="_blank" rel="noreferrer">{s.title}</a></li>
-              ))}
-            </ol>
-          </details>
+        {review.origin === "dish" && (
+          <p className="small muted" style={{ marginBottom: 0 }}>Typical values. Adjust the portion if yours was bigger or smaller.</p>
         )}
-        {review.research && (
-          <details style={{ marginTop: 6 }}>
-            <summary>What the lookup found</summary>
-            <p className="small" style={{ whiteSpace: "pre-wrap" }}>{review.research}</p>
-          </details>
+        {review.sources.length > 0 && (
+          <ol className="sources">
+            {review.sources.map((s) => (
+              <li key={s.url}><a href={s.url} target="_blank" rel="noreferrer">{s.title}</a></li>
+            ))}
+          </ol>
         )}
       </section>
 
@@ -436,7 +381,6 @@ function ReviewPanel({
             </div>
             <div className="row" style={{ margin: "6px 0" }}>
               <input className="grow small" value={d.portion} onChange={(e) => updateDraft(d.key, { portion: e.target.value })} aria-label="Portion" />
-              {d.basis && <span className="pill">{BASIS_LABEL[d.basis] ?? d.basis}</span>}
             </div>
             <div className="mini-grid">
               {NUM_FIELDS.map((f) => (
@@ -453,14 +397,7 @@ function ReviewPanel({
             </div>
           </div>
         ))}
-        <button
-          onClick={() =>
-            setReview({
-              ...review,
-              drafts: [...review.drafts, { key: newId(), name: "", portion: "1 serving", nutrients: { ...EMPTY_NUTRIENTS }, include: true }],
-            })
-          }
-        >
+        <button onClick={() => setReview({ ...review, drafts: [...review.drafts, draft("", "1 serving", EMPTY_NUTRIENTS)] })}>
           + Add another item
         </button>
       </section>

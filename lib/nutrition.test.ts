@@ -73,3 +73,15 @@ test("weightTrend smooths", () => {
   assert.equal(out[0].trend, 80);
   assert.ok(Math.abs(out[1].trend - 80.2) < 1e-9);
 });
+
+test("dish list: macros roughly match calories, search works", async () => {
+  const { DISHES, searchDishes } = await import("./dishes.ts");
+  for (const d of DISHES) {
+    const n = d.nutrients;
+    const fromMacros = n.proteinG * 4 + n.carbsG * 4 + n.fatG * 9;
+    // Within 15% or 30 kcal (rounding, alcohol-free, fibre counted in carbs).
+    assert.ok(Math.abs(fromMacros - n.calories) <= Math.max(30, n.calories * 0.15), `${d.name}: ${fromMacros} vs ${n.calories}`);
+  }
+  assert.ok(searchDishes("chicken rice").some((d) => d.name.startsWith("Chicken rice")));
+  assert.ok(searchDishes("KOPI siew").length === 1);
+});

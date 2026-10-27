@@ -7,7 +7,6 @@ import { ProfileForm } from "@/components/ProfileForm";
 import { TodayView } from "@/components/TodayView";
 import { AddFood } from "@/components/AddFood";
 import { ProgressView } from "@/components/ProgressView";
-import { ApiKeyCard } from "@/components/ApiKeyCard";
 
 type Tab = "today" | "add" | "progress" | "settings";
 
@@ -82,8 +81,8 @@ export default function Home() {
       {tab === "add" && (
         <AddFood
           date={date}
+          entries={entries}
           onCancel={() => setTab("today")}
-          onOpenSettings={() => setTab("settings")}
           onSave={(added) => {
             setEntries((prev) => [...prev, ...added]);
             setTab("today");
@@ -108,7 +107,6 @@ export default function Home() {
             <h2>Your goal</h2>
             <ProfileForm initial={profile} onSave={(p) => { setProfile(p); setTab("today"); }} />
           </section>
-          <ApiKeyCard />
           <section className="card stack">
             <h2>Your data</h2>
             <p className="muted small" style={{ margin: 0 }}>
@@ -150,7 +148,7 @@ export default function Home() {
             </div>
           </section>
           <p className="small muted">
-            Calorie estimates from photos are approximate. This app is not medical advice; if you have a health condition,
+            Dish values are typical servings and vary by stall. This app is not medical advice; if you have a health condition,
             check targets with a doctor or dietitian.
           </p>
         </>

@@ -149,7 +149,7 @@ export function TodayView({
           <h2 style={{ margin: 0 }}>Food log</h2>
           <button className="primary" onClick={onAdd}>+ Add food</button>
         </div>
-        {day.length === 0 && <p className="muted small">Nothing logged yet. Snap a photo of your next meal.</p>}
+        {day.length === 0 && <p className="muted small">Nothing logged yet. Add your next meal.</p>}
         {MEAL_SLOTS.map((slot) => {
           const items = day.filter((e) => e.meal === slot).sort((a, b) => a.createdAt - b.createdAt);
           if (items.length === 0) return null;

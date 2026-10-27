@@ -5,11 +5,15 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 import type { Nutrients, Profile } from "./nutrition";
-import type { Source } from "./estimate-schema";
 
 export type MealSlot = "breakfast" | "lunch" | "dinner" | "snack";
 
 export const MEAL_SLOTS: MealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
+
+export interface Source {
+  title: string;
+  url: string;
+}
 
 export interface FoodEntry {
   id: string;
@@ -19,7 +23,7 @@ export interface FoodEntry {
   name: string;
   portion: string;
   nutrients: Nutrients;
-  origin: "ai" | "database" | "manual";
+  origin: "dish" | "database" | "manual";
   place?: string;
   sources?: Source[];
 }
@@ -33,9 +37,14 @@ const KEYS = {
   profile: "snacktrack.profile.v1",
   entries: "snacktrack.entries.v1",
   weights: "snacktrack.weights.v1",
-  // Deliberately not part of exportAll(), so backups never contain the key.
-  apiKey: "snacktrack.anthropicKey.v1",
 } as const;
+
+// Earlier versions stored an Anthropic API key; remove it if present.
+try {
+  if (typeof localStorage !== "undefined") localStorage.removeItem("snacktrack.anthropicKey.v1");
+} catch {
+  // Storage blocked: nothing to remove.
+}
 
 const listeners = new Set<() => void>();
 const cache = new Map<string, { raw: string | null; value: unknown }>();
@@ -109,10 +118,6 @@ export function useEntries() {
 
 export function useWeights() {
   return useStored<WeightEntry[]>(KEYS.weights, NO_WEIGHTS);
-}
-
-export function useApiKey() {
-  return useStored<string>(KEYS.apiKey, "");
 }
 
 export function newId(): string {
