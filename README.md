@@ -14,7 +14,7 @@ A free, mobile-first food tracker for losing weight with a calorie deficit. Desc
 - **Review before logging.** Edit any number, add items, and scale the portion from ×0.5 to ×2.
 - **Today view.** Calories-left ring, macro bars, and the log grouped by meal. Step back to earlier days to log them late.
 - **Progress view.** Weigh-ins with a smoothed trend line (so water swings don't mislead you), 14 days of calories vs. target and maintenance, average deficit, estimated fat lost and a projected goal date.
-- **Cloud history (optional).** Sign in under **Goals → Account & sync** (same username and password as SplitDumb) and your log, weigh-ins and goal are saved to Supabase and synced across devices. The app keeps a local copy, so it stays fast and works offline; changes are queued and sent when you're back online. Anything logged before signing in is uploaded at first sign-in. Without an account everything stays in the browser, and you can export/import a JSON backup.
+- **Cloud history (optional).** Sign in under **Goals → Account & sync** and your log, weigh-ins and goal are saved to Supabase and synced across devices. The app keeps a local copy, so it stays fast and works offline; changes are queued and sent when you're back online. Anything logged before signing in is uploaded at first sign-in. Without an account everything stays in the browser, and you can export/import a JSON backup.
 
 **Live app:** https://kaichaoang.github.io/snack-track/
 
@@ -28,9 +28,9 @@ The app is a static site with no server of its own. Gemini, Open Food Facts and 
 
 ## Database (Supabase)
 
-SnackTrack shares the SplitDumb Supabase project (`esnphmnqxbdeygwrusjv`) and its accounts (`app_users`, `sessions`). Its own tables are `snack_profiles`, `snack_entries` and `snack_weights`, created by `supabase/migrations/`. As in SplitDumb, the tables have RLS on with no policies and no grants, so the publishable key in `lib/sync.ts` can't read them; the app calls `SECURITY DEFINER` functions (`snack_load`, `snack_upsert_entries`, …) that check the session token.
+SnackTrack uses the Supabase project `esnphmnqxbdeygwrusjv`, with accounts in `app_users` / `sessions`. Its own tables are `snack_profiles`, `snack_entries` and `snack_weights`, created by `supabase/migrations/`. The tables have RLS on with no policies and no grants, so the publishable key in `lib/sync.ts` can't read them; the app calls `SECURITY DEFINER` functions (`snack_load`, `snack_upsert_entries`, …) that check the session token.
 
-**Keep-alive:** free Supabase projects pause after 7 days without activity. `.github/workflows/keepalive.yml` calls `public.keepalive()` (`SELECT 1`) every 3 days, which keeps the shared project (SplitDumb too) awake. GitHub turns off scheduled workflows in a repo with no commits for 60 days; if that happens, re-enable it under **Actions → Keep Supabase awake**.
+**Keep-alive:** free Supabase projects pause after 7 days without activity. `.github/workflows/keepalive.yml` calls `public.keepalive()` (`SELECT 1`) every 3 days to keep the project awake. GitHub turns off scheduled workflows in a repo with no commits for 60 days; if that happens, re-enable it under **Actions → Keep Supabase awake**.
 
 ## Develop
 

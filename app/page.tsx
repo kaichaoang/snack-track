@@ -54,7 +54,7 @@ export default function Home() {
             }}
           />
         </section>
-        <p className="muted small">Already use SnackTrack (or SplitDumb)? Sign in to load your goal and history.</p>
+        <p className="muted small">Already have an account? Sign in to load your goal and history.</p>
         <AccountCard />
       </main>
     );

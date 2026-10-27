@@ -1,9 +1,9 @@
--- SnackTrack tables and functions in the shared SplitDumb Supabase project
--- (esnphmnqxbdeygwrusjv). Already applied; kept here as the record of the schema.
+-- SnackTrack tables and functions (Supabase project esnphmnqxbdeygwrusjv).
+-- Already applied; kept here as the record of the schema.
 --
--- Accounts come from SplitDumb: public.app_users / public.sessions, with
+-- Accounts: public.app_users / public.sessions, with
 -- register_user, login_user, logout and auth_user(token).
--- Same model as SplitDumb: tables are locked (RLS on, no policies, no grants);
+-- Tables are locked (RLS on, no policies, no grants);
 -- the app calls SECURITY DEFINER functions that check the session token.
 
 create table public.snack_profiles (

@@ -1,6 +1,6 @@
 "use client";
 
-// Cloud sync with Supabase (shared with SplitDumb: same accounts).
+// Cloud sync with Supabase.
 //
 // localStorage stays the working copy so the app is instant and works offline.
 // Every change is applied locally and queued; the queue is sent to Supabase

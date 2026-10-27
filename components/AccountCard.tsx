@@ -58,7 +58,7 @@ export function AccountCard() {
     <section className="card stack">
       <h2>Account &amp; sync</h2>
       <p className="muted small" style={{ margin: 0 }}>
-        Sign in to save your history to the cloud and use it on any device. It&apos;s the same account as SplitDumb. Whatever
+        Sign in to save your history to the cloud and use it on any device. Whatever
         you&apos;ve logged on this device is uploaded when you sign in.
       </p>
       {status === "error" && <div className="error">Your session expired. Please sign in again.</div>}

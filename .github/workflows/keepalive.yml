@@ -1,8 +1,7 @@
 name: Keep Supabase awake
 
 # Free Supabase projects pause after 7 days without activity. This runs a
-# trivial query (public.keepalive() = SELECT 1) every 3 days. The project is
-# shared with SplitDumb, so this keeps both apps' database awake.
+# trivial query (public.keepalive() = SELECT 1) every 3 days.
 
 on:
   schedule:
