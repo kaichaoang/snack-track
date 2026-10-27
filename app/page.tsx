@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { localDateKey, targets } from "@/lib/nutrition";
-import { exportAll, importAll, useEntries, useProfile, useWeights, type WeightEntry } from "@/lib/store";
-import { addEntries, deleteEntry, deleteWeight, putWeight, saveProfile, startSync, uploadAll, useSession, useSyncStatus } from "@/lib/sync";
+import { exportAll, importAll, useEntries, useProfile, useWeights, type FoodEntry, type WeightEntry } from "@/lib/store";
+import { addEntries, deleteEntry, deleteWeight, putWeight, saveProfile, startSync, updateEntry, uploadAll, useSession, useSyncStatus } from "@/lib/sync";
+import { EditEntry } from "@/components/EditEntry";
 import { AccountCard } from "@/components/AccountCard";
 import { ProfileForm } from "@/components/ProfileForm";
 import { TodayView } from "@/components/TodayView";
@@ -40,7 +41,15 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("today");
   const [date, setDate] = useState(localDateKey());
   const [mounted, setMounted] = useState(false);
+  const [editing, setEditing] = useState<FoodEntry | null>(null);
+  // Last deletion, offered for Undo for a few seconds.
+  const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    if (!undo) return;
+    const t = setTimeout(() => setUndo(null), 6000);
+    return () => clearTimeout(t);
+  }, [undo]);
   useEffect(() => startSync(), []);
 
   // localStorage is only available after mount; avoid flashing onboarding.
@@ -72,6 +81,18 @@ export default function Home() {
 
   const t = targets(profile);
 
+  const removeEntry = (id: string) => {
+    const e = entries.find((x) => x.id === id);
+    deleteEntry(id);
+    if (e) setUndo({ label: e.name, restore: () => addEntries([e]) });
+  };
+
+  const removeWeight = (d: string) => {
+    const w = weights.find((x) => x.date === d);
+    deleteWeight(d);
+    if (w) setUndo({ label: "weigh-in", restore: () => putWeight(w) });
+  };
+
   const logWeight = (w: WeightEntry) => {
     putWeight(w);
     // Keep targets in step with current weight.
@@ -90,13 +111,29 @@ export default function Home() {
         </span>
       </header>
 
-      {tab === "today" && (
+      {tab === "today" && editing && (
+        <EditEntry
+          entry={editing}
+          onCancel={() => setEditing(null)}
+          onSave={(e) => {
+            updateEntry(e);
+            setEditing(null);
+          }}
+          onDelete={() => {
+            removeEntry(editing.id);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      {tab === "today" && !editing && (
         <TodayView
           date={date}
           setDate={setDate}
           entries={entries}
           t={t}
-          onDelete={deleteEntry}
+          onDelete={removeEntry}
+          onEdit={setEditing}
           onAdd={() => setTab("add")}
         />
       )}
@@ -120,7 +157,7 @@ export default function Home() {
           entries={entries}
           weights={weights}
           onLogWeight={logWeight}
-          onDeleteWeight={deleteWeight}
+          onDeleteWeight={removeWeight}
         />
       )}
 
@@ -181,10 +218,34 @@ export default function Home() {
         </>
       )}
 
+      {undo && (
+        <div className="toast" role="status">
+          <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            Deleted {undo.label}
+          </span>
+          <button
+            onClick={() => {
+              undo.restore();
+              setUndo(null);
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
+
       <nav className="tabs">
         <div className="inner">
           {(Object.keys(LABELS) as Tab[]).map((k) => (
-            <button key={k} aria-label={LABELS[k]} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>
+            <button
+              key={k}
+              aria-label={LABELS[k]}
+              aria-current={tab === k ? "page" : undefined}
+              onClick={() => {
+                setTab(k);
+                setEditing(null);
+              }}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === k ? 2.4 : 1.7} strokeLinecap="round" strokeLinejoin="round">
                 {ICONS[k](tab === k)}
               </svg>

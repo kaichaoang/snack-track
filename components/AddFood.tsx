@@ -221,6 +221,8 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
             setError(null);
           }}
           placeholder="e.g. grouper fish soup with less rice, a little sauce, some soup"
+          className="describe"
+          rows={5}
         />
       </label>
 

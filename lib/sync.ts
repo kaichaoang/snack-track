@@ -232,6 +232,12 @@ export function addEntries(added: FoodEntry[]) {
   enqueue({ t: "entries", entries: added });
 }
 
+/** Replace an existing entry (edits keep the same id). */
+export function updateEntry(e: FoodEntry) {
+  write(KEYS.entries, read<FoodEntry[]>(KEYS.entries, []).map((x) => (x.id === e.id ? e : x)));
+  enqueue({ t: "entries", entries: [e] });
+}
+
 export function deleteEntry(id: string) {
   write(KEYS.entries, read<FoodEntry[]>(KEYS.entries, []).filter((e) => e.id !== id));
   enqueue({ t: "deleteEntry", id });

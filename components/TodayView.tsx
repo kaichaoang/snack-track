@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDelete } from "./ConfirmDelete";
 import { localDateKey, sumNutrients, type Targets } from "@/lib/nutrition";
 import { MEAL_SLOTS, type FoodEntry } from "@/lib/store";
 
@@ -98,6 +99,7 @@ export function TodayView({
   entries,
   t,
   onDelete,
+  onEdit,
   onAdd,
 }: {
   date: string;
@@ -105,6 +107,7 @@ export function TodayView({
   entries: FoodEntry[];
   t: Targets;
   onDelete: (id: string) => void;
+  onEdit: (e: FoodEntry) => void;
   onAdd: () => void;
 }) {
   const day = entries.filter((e) => e.date === date);
@@ -174,18 +177,16 @@ export function TodayView({
               </h3>
               {items.map((e) => (
                 <div className="entry" key={e.id}>
-                  <div className="grow">
+                  <button className="grow entry-main" onClick={() => onEdit(e)} aria-label={`Edit ${e.name}`}>
                     <div className="name">{e.name}</div>
                     <div className="meta">
                       {e.portion}
                       {e.place ? ` · ${e.place}` : ""} · P {Math.round(e.nutrients.proteinG)} · C {Math.round(e.nutrients.carbsG)} · F{" "}
                       {Math.round(e.nutrients.fatG)}
                     </div>
-                  </div>
-                  <span className="kcal">{Math.round(e.nutrients.calories)}</span>
-                  <button className="ghost danger" aria-label={`Delete ${e.name}`} onClick={() => onDelete(e.id)}>
-                    ✕
                   </button>
+                  <span className="kcal">{Math.round(e.nutrients.calories)}</span>
+                  <ConfirmDelete label={e.name} onConfirm={() => onDelete(e.id)} />
                 </div>
               ))}
             </div>

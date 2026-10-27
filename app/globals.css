@@ -15,6 +15,9 @@
   --fat: #b4508a;
   --fiber: #2f7d4f;
   --radius: 14px;
+  --tabbar-bg: rgb(255 255 255 / 0.62);
+  --tabbar-border: rgb(0 0 0 / 0.08);
+  --tabbar-active: rgb(0 0 0 / 0.07);
   color-scheme: light;
 }
 
@@ -35,6 +38,9 @@
     --carbs: #e2b555;
     --fat: #e08ac0;
     --fiber: #5bbf82;
+    --tabbar-bg: rgb(28 32 27 / 0.6);
+    --tabbar-border: rgb(255 255 255 / 0.1);
+    --tabbar-active: rgb(255 255 255 / 0.12);
     color-scheme: dark;
   }
 }
@@ -53,7 +59,7 @@ html, body {
 .app {
   max-width: 560px;
   margin: 0 auto;
-  padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 84px);
+  padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 96px);
 }
 
 header.top {
@@ -99,6 +105,7 @@ input, select, textarea {
   padding: 10px 12px;
 }
 textarea { resize: vertical; min-height: 64px; }
+textarea.describe { min-height: 132px; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -123,23 +130,54 @@ button.block { width: 100%; }
 .seg button { flex: 1; border: none; background: transparent; padding: 8px 4px; font-size: 0.88rem; min-width: 0; }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); font-weight: 600; }
 
-/* Instagram-style tab bar: icons only, thin top rule, padded above the iPhone home indicator. */
+/* Tappable entry row (opens the editor). */
+.entry-main { background: none; border: none; padding: 0; text-align: left; color: inherit; min-width: 0; cursor: pointer; }
+button.confirm-delete { background: var(--danger); color: #fff; border-color: var(--danger); padding: 6px 10px; font-size: 0.85rem; font-weight: 600; }
+
+/* Undo bar, floating just above the tab bar. */
+.toast {
+  position: fixed; left: 16px; right: 16px; max-width: 440px; margin: 0 auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 82px);
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 10px 10px 16px; border-radius: 14px;
+  background: var(--text); color: var(--bg); z-index: 11;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.2);
+}
+.toast button { background: transparent; border: none; color: var(--accent-soft); font-weight: 700; padding: 6px 10px; }
+
+/* Horizontally scrolling pill chips (nutrient picker). */
+.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
+.chips::-webkit-scrollbar { display: none; }
+.chips button { flex: none; border-radius: 999px; padding: 7px 14px; font-size: 0.9rem; background: var(--surface-2); border: 1px solid transparent; }
+.chips button[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }
+
+/* Instagram-style floating tab bar: a frosted, see-through pill that sits above the
+   iPhone home indicator, with a soft highlight behind the active tab. */
 nav.tabs {
   position: fixed;
-  bottom: 0; left: 0; right: 0;
-  background: var(--surface);
-  border-top: 0.5px solid var(--border);
+  left: 16px; right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  max-width: 440px;
+  margin: 0 auto;
   display: flex;
-  justify-content: center;
-  padding: 4px 8px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  padding: 5px;
+  border-radius: 999px;
+  background: var(--tabbar-bg);
+  border: 0.5px solid var(--tabbar-border);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   z-index: 10;
 }
-nav.tabs .inner { display: flex; max-width: 560px; width: 100%; justify-content: space-around; }
+nav.tabs .inner { display: flex; width: 100%; gap: 4px; }
 nav.tabs button {
   flex: 1; border: none; background: transparent; color: var(--text);
-  height: 48px; padding: 0; display: flex; align-items: center; justify-content: center;
+  height: 50px; padding: 0; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease;
   -webkit-tap-highlight-color: transparent;
 }
+nav.tabs button[aria-current="page"] { background: var(--tabbar-active); }
 nav.tabs svg { width: 27px; height: 27px; }
 
 .ring-wrap { display: flex; gap: 16px; align-items: center; }
