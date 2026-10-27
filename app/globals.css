@@ -137,6 +137,30 @@ a.button {
 }
 .ask-claude { border-top: 1px solid var(--border); padding-top: 12px; }
 
+/* AI feedback on a meal. */
+.feedback { display: grid; gap: 8px; margin-top: 10px; font-size: 0.9rem; }
+.feedback ul { margin: 4px 0 0; padding-left: 18px; }
+.feedback li + li { margin-top: 2px; }
+.fb-title { font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.fb-title.good { color: var(--accent); }
+.fb-title.bad { color: var(--warn); }
+.entry-feedback summary { font-size: 0.8rem; margin-top: 2px; }
+.entry-feedback .feedback { margin-top: 4px; }
+
+/* Row actions and in-place editing (SplitDumb style). */
+.row-actions { display: flex; gap: 6px; flex: none; }
+button.icon-btn {
+  width: 36px; height: 36px; padding: 0; display: inline-grid; place-items: center; flex: none;
+  border-radius: 10px; background: transparent; color: var(--muted); border: 1px solid var(--border);
+}
+button.icon-btn.danger:active, button.icon-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+button.icon-btn:not(.danger):active, button.icon-btn:not(.danger):hover { color: var(--accent); border-color: var(--accent); }
+svg.ico { width: 18px; height: 18px; display: block; }
+.edit-card { border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin: 8px 0; }
+.form-btns { display: flex; gap: 8px; }
+.form-btns button { flex: 1; height: 44px; }
+.form-btns button:first-child { flex: 2; }
+
 /* Tappable entry row (opens the editor). */
 .entry-main { background: none; border: none; padding: 0; text-align: left; color: inherit; min-width: 0; cursor: pointer; }
 button.confirm-delete { background: var(--danger); color: #fff; border-color: var(--danger); padding: 6px 10px; font-size: 0.85rem; font-weight: 600; }
@@ -197,7 +221,7 @@ nav.tabs svg { width: 27px; height: 27px; }
 .macro { font-size: 0.85rem; }
 .macro .row { justify-content: space-between; margin-bottom: 3px; }
 
-.entry { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+.entry { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--border); }
 .entry:first-of-type { border-top: none; }
 .entry .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry .meta { font-size: 0.8rem; color: var(--muted); }

@@ -39,3 +39,19 @@ test("parses Claude's pasted reply (last JSON block, smart quotes ok)", () => {
   assert.equal(e.items[0].nutrients.sodiumMg, 900);
   assert.throws(() => parseClaudeReply("no numbers here"), /Couldn't find/);
 });
+
+test("items keep their meal when the reply spans several meals", () => {
+  const e = parseClaudeReply('{"mealName":"Day","items":[{"name":"Kaya toast","meal":"Breakfast","calories":300},{"name":"Fish soup","meal":"lunch","calories":400},{"name":"Rice","meal":"","calories":200}]}');
+  assert.deepEqual(e.items.map((i) => i.meal), ["breakfast", "lunch", undefined]);
+});
+
+test("feedback is parsed and cleaned", () => {
+  const e = parseClaudeReply('{"items":[{"name":"Laksa","calories":600}],"feedback":{"good":["Decent protein",""],"bad":[{"issue":"High sodium","cause":"the laksa gravy"},{"issue":"","cause":"x"}]}}');
+  assert.deepEqual(e.feedback, { good: ["Decent protein"], bad: [{ issue: "High sodium", cause: "the laksa gravy" }] });
+  assert.equal(parseClaudeReply('{"items":[{"name":"x","calories":1}]}').feedback, undefined);
+});
+
+test("per-meal feedback", () => {
+  const e = parseClaudeReply('{"items":[{"name":"Toast","meal":"breakfast","calories":300}],"mealFeedback":{"Breakfast":{"good":["ok"],"bad":[]},"brunch":{"good":["x"]}}}');
+  assert.deepEqual(e.mealFeedback, { breakfast: { good: ["ok"], bad: [] } });
+});

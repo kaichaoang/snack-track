@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
 import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
-import { claudePrompt, claudeUrl, estimateMeal, parseClaudeReply, type AiEstimate, type AiItem } from "@/lib/ai";
+import { claudePrompt, claudeUrl, estimateMeal, parseClaudeReply, type AiEstimate, type AiItem, type Feedback } from "@/lib/ai";
+import { FeedbackView } from "./FeedbackView";
 import { useAiEnabled, useSession } from "@/lib/sync";
 import { resizeImage } from "@/lib/image";
 import { describeMeal } from "@/lib/describe";
@@ -14,6 +15,8 @@ interface Draft {
   portion: string;
   nutrients: Nutrients;
   include: boolean;
+  /** Set when the description covered several meals. */
+  meal?: MealSlot;
 }
 
 interface Review {
@@ -23,18 +26,36 @@ interface Review {
   /** Log all included items as one entry with this name (described meals). */
   combineAs?: string;
   notes?: string;
+  feedback?: Feedback;
+  mealFeedback?: Partial<Record<MealSlot, Feedback>>;
 }
 
 // The quick (non-AI) estimate uses typical values; nudge it up so it errs high.
 const QUICK_ESTIMATE_BUFFER = 1.15;
 
-const draft = (name: string, portion: string, nutrients: Nutrients): Draft => ({
+const draft = (name: string, portion: string, nutrients: Nutrients, meal?: MealSlot): Draft => ({
   key: newId(),
   name,
   portion,
   nutrients: { ...nutrients },
   include: true,
+  meal,
 });
+
+const cap = (m: string) => m[0].toUpperCase() + m.slice(1);
+
+function MealFeedbackList({ byMeal }: { byMeal: Partial<Record<MealSlot, Feedback>> }) {
+  return (
+    <>
+      {MEAL_SLOTS.filter((m) => byMeal[m]).map((m) => (
+        <div key={m} style={{ marginTop: 8 }}>
+          <b className="small">{cap(m)}</b>
+          <FeedbackView feedback={byMeal[m]!} />
+        </div>
+      ))}
+    </>
+  );
+}
 
 export function AddFood({
   date,
@@ -57,19 +78,32 @@ export function AddFood({
     const included = review.drafts.filter((d) => d.include);
     if (included.length === 0) return;
     if (review.combineAs) {
-      onSave([
-        {
-          id: newId(),
-          date,
-          createdAt: now,
-          meal,
-          name: review.combineAs,
-          portion: (multiplier === 1 ? "" : `×${multiplier} · `) + included.map((d) => d.name.split(" (")[0]).join(", "),
-          nutrients: scaleNutrients(sumNutrients(included.map((d) => d.nutrients)), multiplier),
-          origin: review.origin,
-          sources: review.sources.length ? review.sources : undefined,
-        },
-      ]);
+      // One entry per meal: a description covering breakfast and lunch becomes two entries.
+      const groups = new Map<MealSlot, Draft[]>();
+      for (const d of included) {
+        const slot = d.meal ?? meal;
+        groups.set(slot, [...(groups.get(slot) ?? []), d]);
+      }
+      const ordered = MEAL_SLOTS.filter((m) => groups.has(m));
+      onSave(
+        ordered.map((slot, i) => {
+          const ds = groups.get(slot)!;
+          const names = ds.map((d) => d.name.split(" (")[0]).join(", ");
+          return {
+            id: newId(),
+            date,
+            createdAt: now + i,
+            meal: slot,
+            name: ordered.length === 1 ? review.combineAs! : names,
+            portion: (multiplier === 1 ? "" : `×${multiplier} · `) + names,
+            nutrients: scaleNutrients(sumNutrients(ds.map((d) => d.nutrients)), multiplier),
+            origin: review.origin,
+            sources: review.sources.length ? review.sources : undefined,
+            // Per-meal feedback if given; overall feedback only fits when it's a single meal.
+            feedback: review.mealFeedback?.[slot] ?? (ordered.length === 1 ? review.feedback : undefined),
+          };
+        }),
+      );
       return;
     }
     onSave(
@@ -190,8 +224,10 @@ function AskClaude({ text, onUse }: { text: string; onUse: (r: Review) => void }
         origin: "ai",
         sources: [],
         notes: e.notes,
+        feedback: e.feedback,
+        mealFeedback: e.mealFeedback,
         combineAs: text.trim() || e.mealName,
-        drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients)),
+        drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal)),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read that reply.");
@@ -269,8 +305,10 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
       origin: "ai",
       sources: ai.sources,
       notes: ai.notes,
+      feedback: ai.feedback,
+      mealFeedback: ai.mealFeedback,
       combineAs: name,
-      drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients)),
+      drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal)),
     });
   }
 
@@ -352,12 +390,14 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
             <div className="entry" key={n}>
               <div className="grow">
                 <div className="name">{i.name}</div>
-                <div className="meta">{i.portion} · {BASIS_LABEL[i.basis]}</div>
+                <div className="meta">{i.meal ? `${cap(i.meal)} · ` : ""}{i.portion} · {BASIS_LABEL[i.basis]}</div>
               </div>
               <span className="kcal">{Math.round(i.nutrients.calories)}</span>
             </div>
           ))}
           {ai.notes && <p className="small" style={{ margin: "6px 0 0" }}>{ai.notes}</p>}
+          {ai.feedback && <FeedbackView feedback={ai.feedback} />}
+          {ai.mealFeedback && <MealFeedbackList byMeal={ai.mealFeedback} />}
           {ai.sources.length > 0 && (
             <ol className="sources">
               {ai.sources.map((s) => (
@@ -445,6 +485,8 @@ function ReviewPanel({
     setReview({ ...review, drafts: review.drafts.map((d) => (d.key === key ? { ...d, ...patch } : d)) });
   const total = scaleNutrients(sumNutrients(review.drafts.filter((d) => d.include).map((d) => d.nutrients)), multiplier);
   const manual = review.origin === "manual";
+  // Each item picks its own meal when the description covered several meals.
+  const multiMeal = review.drafts.some((d) => d.meal);
 
   return (
     <>
@@ -457,6 +499,8 @@ function ReviewPanel({
         </div>
         {review.combineAs && <p style={{ margin: "6px 0 0" }}>“{review.combineAs}”</p>}
         {review.notes && <p className="small" style={{ margin: "6px 0 0" }}>{review.notes}</p>}
+        {review.feedback && <FeedbackView feedback={review.feedback} />}
+        {review.mealFeedback && <MealFeedbackList byMeal={review.mealFeedback} />}
         {review.sources.length > 0 && (
           <ol className="sources">
             {review.sources.map((s) => (
@@ -490,6 +534,11 @@ function ReviewPanel({
             </div>
             <div className="row" style={{ margin: "6px 0" }}>
               <input className="grow" value={d.portion} placeholder="Portion" onChange={(e) => updateDraft(d.key, { portion: e.target.value })} aria-label="Portion" />
+              {multiMeal && (
+                <select style={{ width: "auto" }} value={d.meal ?? meal} onChange={(e) => updateDraft(d.key, { meal: e.target.value as MealSlot })} aria-label="Meal">
+                  {MEAL_SLOTS.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                </select>
+              )}
             </div>
             <div className="mini-grid">
               {NUM_FIELDS.map((f) => (
@@ -513,12 +562,16 @@ function ReviewPanel({
       </section>
 
       <section className="card stack">
+        {multiMeal ? (
+          <p className="small muted" style={{ margin: 0 }}>Logged as one entry per meal, as chosen on each item.</p>
+        ) : (
         <label className="field">
           <span>Meal</span>
           <select value={meal} onChange={(e) => setMeal(e.target.value as MealSlot)}>
             {MEAL_SLOTS.map((m) => <option key={m} value={m}>{m[0].toUpperCase() + m.slice(1)}</option>)}
           </select>
         </label>
+        )}
         <div className="row">
           <button className="grow" onClick={onBack}>Back</button>
           <button className="primary grow" onClick={onSave} disabled={!review.drafts.some((d) => d.include && (d.name.trim() || d.nutrients.calories > 0))}>

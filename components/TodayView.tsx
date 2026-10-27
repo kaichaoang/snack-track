@@ -1,6 +1,9 @@
 "use client";
 
-import { ConfirmDelete } from "./ConfirmDelete";
+import { useState } from "react";
+import { EditEntry } from "./EditEntry";
+import { IconButton } from "./Icons";
+import { FeedbackView } from "./FeedbackView";
 import { localDateKey, sumNutrients, type Targets } from "@/lib/nutrition";
 import { MEAL_SLOTS, type FoodEntry } from "@/lib/store";
 
@@ -99,7 +102,7 @@ export function TodayView({
   entries,
   t,
   onDelete,
-  onEdit,
+  onUpdate,
   onAdd,
 }: {
   date: string;
@@ -107,9 +110,11 @@ export function TodayView({
   entries: FoodEntry[];
   t: Targets;
   onDelete: (id: string) => void;
-  onEdit: (e: FoodEntry) => void;
+  onUpdate: (e: FoodEntry) => void;
   onAdd: () => void;
 }) {
+  // Entry being edited in place in the list (like SplitDumb's expense list).
+  const [editingId, setEditingId] = useState<string | null>(null);
   const day = entries.filter((e) => e.date === date);
   const total = sumNutrients(day.map((e) => e.nutrients));
   const isToday = date === localDateKey();
@@ -175,20 +180,49 @@ export function TodayView({
                 <span>{slot}</span>
                 <span className="num">{Math.round(kcal)} kcal</span>
               </h3>
-              {items.map((e) => (
-                <div className="entry" key={e.id}>
-                  <button className="grow entry-main" onClick={() => onEdit(e)} aria-label={`Edit ${e.name}`}>
-                    <div className="name">{e.name}</div>
-                    <div className="meta">
-                      {e.portion}
-                      {e.place ? ` · ${e.place}` : ""} · P {Math.round(e.nutrients.proteinG)} · C {Math.round(e.nutrients.carbsG)} · F{" "}
-                      {Math.round(e.nutrients.fatG)}
+              {items.map((e) =>
+                e.id === editingId ? (
+                  <EditEntry
+                    key={e.id}
+                    entry={e}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(updated) => {
+                      onUpdate(updated);
+                      setEditingId(null);
+                    }}
+                  />
+                ) : (
+                  <div className="entry" key={e.id}>
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="name">{e.name}</div>
+                      <div className="meta">
+                        {Math.round(e.nutrients.calories)} kcal · P {Math.round(e.nutrients.proteinG)} · C {Math.round(e.nutrients.carbsG)} · F{" "}
+                        {Math.round(e.nutrients.fatG)}
+                      </div>
+                      {e.feedback && (
+                        <details className="entry-feedback">
+                          <summary>
+                            {e.feedback.bad.length ? `${e.feedback.bad.length} to watch` : "Looks good"}
+                            {e.feedback.good.length ? ` · ${e.feedback.good.length} good` : ""}
+                          </summary>
+                          <FeedbackView feedback={e.feedback} />
+                        </details>
+                      )}
                     </div>
-                  </button>
-                  <span className="kcal">{Math.round(e.nutrients.calories)}</span>
-                  <ConfirmDelete label={e.name} onConfirm={() => onDelete(e.id)} />
-                </div>
-              ))}
+                    <div className="row-actions">
+                      <IconButton icon="edit" label={`Edit ${e.name}`} onClick={() => setEditingId(e.id)} />
+                      <IconButton
+                        icon="trash"
+                        danger
+                        label={`Delete ${e.name}`}
+                        onClick={() => {
+                          if (window.confirm(`Delete "${e.name}"?`)) onDelete(e.id);
+                        }}
+                      />
+                    </div>
+                  </div>
+                ),
+              )}
             </div>
           );
         })}

@@ -4,7 +4,7 @@
 // which holds the AI key and only answers for accounts allowed to use it.
 
 import type { Nutrients } from "./nutrition.ts";
-import type { Source } from "./store.ts";
+import type { MealSlot, Source } from "./store.ts";
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.ts";
 
 export interface AiItem {
@@ -12,6 +12,28 @@ export interface AiItem {
   portion: string;
   basis: "published" | "database" | "estimate";
   nutrients: Nutrients;
+  /** Which meal it belongs to, when the description covers several meals. */
+  meal?: MealSlot;
+}
+
+const MEALS: MealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
+
+function parseFeedback(raw: unknown): Feedback | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const good = (Array.isArray(r.good) ? r.good : []).map(String).map((x) => x.trim()).filter(Boolean).slice(0, 5);
+  const bad = (Array.isArray(r.bad) ? r.bad : [])
+    .map((b) => (b && typeof b === "object" ? (b as Record<string, unknown>) : { issue: String(b) }))
+    .map((b) => ({ issue: String(b.issue ?? "").trim(), cause: String(b.cause ?? "").trim() }))
+    .filter((b) => b.issue)
+    .slice(0, 5);
+  return good.length || bad.length ? { good, bad } : undefined;
+}
+
+/** What's good about a meal, and what isn't plus what's causing it. */
+export interface Feedback {
+  good: string[];
+  bad: { issue: string; cause: string }[];
 }
 
 export interface AiEstimate {
@@ -20,6 +42,9 @@ export interface AiEstimate {
   notes: string;
   items: AiItem[];
   sources: Source[];
+  feedback?: Feedback;
+  /** Per-meal feedback when the description covered several meals. */
+  mealFeedback?: Partial<Record<MealSlot, Feedback>>;
 }
 
 export interface Photo {
@@ -40,6 +65,7 @@ export function parseEstimate(raw: unknown): Omit<AiEstimate, "sources"> {
     name: String(it.name ?? "Food"),
     portion: String(it.portion ?? "1 serving"),
     basis: it.basis === "published" || it.basis === "database" ? it.basis : "estimate",
+    meal: MEALS.includes(String(it.meal).toLowerCase() as MealSlot) ? (String(it.meal).toLowerCase() as MealSlot) : undefined,
     nutrients: {
       calories: num(it.calories),
       proteinG: num(it.proteinG),
@@ -53,7 +79,22 @@ export function parseEstimate(raw: unknown): Omit<AiEstimate, "sources"> {
   }));
   if (items.length === 0) throw new Error("Couldn't identify any food. Add more detail.");
   const confidence = r.confidence === "high" || r.confidence === "low" ? r.confidence : "medium";
-  return { mealName: String(r.mealName ?? "Meal"), confidence, notes: String(r.notes ?? ""), items };
+  const mealFeedback: Partial<Record<MealSlot, Feedback>> = {};
+  if (r.mealFeedback && typeof r.mealFeedback === "object") {
+    for (const [k, v] of Object.entries(r.mealFeedback as Record<string, unknown>)) {
+      const slot = k.toLowerCase() as MealSlot;
+      const fb = parseFeedback(v);
+      if (MEALS.includes(slot) && fb) mealFeedback[slot] = fb;
+    }
+  }
+  return {
+    mealName: String(r.mealName ?? "Meal"),
+    confidence,
+    notes: String(r.notes ?? ""),
+    items,
+    feedback: parseFeedback(r.feedback),
+    mealFeedback: Object.keys(mealFeedback).length ? mealFeedback : undefined,
+  };
 }
 
 export async function estimateMeal(token: string, description: string, photo?: Photo): Promise<AiEstimate> {
@@ -82,14 +123,17 @@ export function claudePrompt(description: string): string {
 
 How to estimate:
 - Split the meal into its parts (e.g. fish, vegetables, broth, rice, sauce, drink).
+- If I describe more than one meal (e.g. breakfast, lunch, dinner, snacks, or "this morning" / "tonight"), set "meal" on every item to "breakfast", "lunch", "dinner" or "snack". If it's a single meal, leave "meal" empty.
 - If a restaurant, chain or brand is named, search for its official nutrition information for the exact item and use it.
 - Apply my wording literally: "less rice" ≈ half the usual portion, "a little" ≈ a third, "some soup" ≈ half the bowl, "no X" = none, "extra X" ≈ 1.5×.
 - Err on the high side: assume generous Singapore portions, count cooking oil, sauces and dressings even if I didn't mention them, assume drinks are sweetened unless I say kosong / no sugar, and use the upper end of any range.
 
+Also tell me, briefly and specifically for my weight-loss goal: what's good about this meal, and what's not good together with exactly which food or ingredient is causing it (e.g. high sodium → the soup broth and chilli sauce; lots of saturated fat → the fried shallots and pork lard). If I described several meals, give this feedback separately for each meal in "mealFeedback" (keys "breakfast", "lunch", "dinner", "snack") instead of "feedback".
+
 Give a short breakdown, then end your reply with this JSON block exactly (numbers only, calories rounded up to the nearest 5):
 
 \`\`\`json
-{"mealName": "", "confidence": "high|medium|low", "notes": "", "items": [{"name": "", "portion": "", "basis": "published|database|estimate", "calories": 0, "proteinG": 0, "carbsG": 0, "fatG": 0, "fiberG": 0, "sugarG": 0, "sodiumMg": 0, "saturatedFatG": 0}]}
+{"mealName": "", "confidence": "high|medium|low", "notes": "", "items": [{"name": "", "portion": "", "basis": "published|database|estimate", "meal": "", "calories": 0, "proteinG": 0, "carbsG": 0, "fatG": 0, "fiberG": 0, "sugarG": 0, "sodiumMg": 0, "saturatedFatG": 0}], "feedback": {"good": [""], "bad": [{"issue": "", "cause": ""}]}, "mealFeedback": {}}
 \`\`\``;
 }
 

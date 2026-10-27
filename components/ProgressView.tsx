@@ -4,7 +4,7 @@ import { useState } from "react";
 import { KCAL_PER_KG_FAT, localDateKey, sumNutrients, weightTrend, type Nutrients, type Profile, type Targets } from "@/lib/nutrition";
 import type { FoodEntry, WeightEntry } from "@/lib/store";
 import { fullDate, prettyDate, shiftDate } from "./TodayView";
-import { ConfirmDelete } from "./ConfirmDelete";
+import { IconButton } from "./Icons";
 
 function WeightChart({ weights, goal }: { weights: WeightEntry[]; goal: number }) {
   const data = weightTrend([...weights].sort((a, b) => a.date.localeCompare(b.date)).slice(-60));
@@ -250,7 +250,14 @@ export function ProgressView({
               <div className="entry" key={w.date}>
                 <span className="grow">{prettyDate(w.date)}</span>
                 <span className="kcal">{w.kg} kg</span>
-                <ConfirmDelete label={`weigh-in on ${prettyDate(w.date)}`} onConfirm={() => onDeleteWeight(w.date)} />
+                <IconButton
+                  icon="trash"
+                  danger
+                  label={`Delete weigh-in on ${prettyDate(w.date)}`}
+                  onClick={() => {
+                    if (window.confirm(`Delete the weigh-in on ${prettyDate(w.date)}?`)) onDeleteWeight(w.date);
+                  }}
+                />
               </div>
             ))}
           </details>

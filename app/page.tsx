@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { localDateKey, targets } from "@/lib/nutrition";
-import { exportAll, importAll, useEntries, useProfile, useWeights, type FoodEntry, type WeightEntry } from "@/lib/store";
+import { exportAll, importAll, useEntries, useProfile, useWeights, type WeightEntry } from "@/lib/store";
 import { addEntries, deleteEntry, deleteWeight, putWeight, saveProfile, startSync, updateEntry, uploadAll, useSession, useSyncStatus } from "@/lib/sync";
-import { EditEntry } from "@/components/EditEntry";
 import { AccountCard } from "@/components/AccountCard";
 import { ProfileForm } from "@/components/ProfileForm";
 import { TodayView } from "@/components/TodayView";
@@ -41,7 +40,6 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("today");
   const [date, setDate] = useState(localDateKey());
   const [mounted, setMounted] = useState(false);
-  const [editing, setEditing] = useState<FoodEntry | null>(null);
   // Last deletion, offered for Undo for a few seconds.
   const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
   useEffect(() => setMounted(true), []);
@@ -111,29 +109,14 @@ export default function Home() {
         </span>
       </header>
 
-      {tab === "today" && editing && (
-        <EditEntry
-          entry={editing}
-          onCancel={() => setEditing(null)}
-          onSave={(e) => {
-            updateEntry(e);
-            setEditing(null);
-          }}
-          onDelete={() => {
-            removeEntry(editing.id);
-            setEditing(null);
-          }}
-        />
-      )}
-
-      {tab === "today" && !editing && (
+      {tab === "today" && (
         <TodayView
           date={date}
           setDate={setDate}
           entries={entries}
           t={t}
           onDelete={removeEntry}
-          onEdit={setEditing}
+          onUpdate={updateEntry}
           onAdd={() => setTab("add")}
         />
       )}
@@ -241,10 +224,7 @@ export default function Home() {
               key={k}
               aria-label={LABELS[k]}
               aria-current={tab === k ? "page" : undefined}
-              onClick={() => {
-                setTab(k);
-                setEditing(null);
-              }}
+              onClick={() => setTab(k)}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === k ? 2.4 : 1.7} strokeLinecap="round" strokeLinejoin="round">
                 {ICONS[k](tab === k)}

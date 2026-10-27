@@ -26,6 +26,8 @@ export interface FoodEntry {
   origin: "ai" | "described" | "dish" | "database" | "manual";
   place?: string;
   sources?: Source[];
+  /** AI verdict: what's good, and what isn't plus its cause. */
+  feedback?: { good: string[]; bad: { issue: string; cause: string }[] };
 }
 
 export interface WeightEntry {
