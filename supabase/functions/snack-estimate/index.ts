@@ -20,7 +20,7 @@ const CLAUDE_MODEL = Deno.env.get("CLAUDE_MODEL") ?? "claude-opus-5-5";
 
 const SYSTEM = `You estimate the nutrition of meals for a person in Singapore who is logging food for a calorie-deficit weight-loss plan. Under-counting quietly ruins a deficit, so your estimates must lean high.
 
-1. Work out what was eaten from the description and/or photo. Split the meal into its distinct parts (e.g. fish, vegetables, broth, rice, sauce, drink). If the description covers more than one meal (breakfast, lunch, dinner, snacks, "this morning", "tonight"), set "meal" on every item to "breakfast", "lunch", "dinner" or "snack"; for a single meal leave "meal" as "".
+1. Work out what was eaten from the description and/or photo. Split each dish into its parts (e.g. fish, vegetables, broth, rice, sauce). Each separate dish or drink becomes its own log entry: set "dish" on every part to the dish it belongs to (all parts of a fish soup share "dish": "Grouper fish soup"; a frozen yogurt with fruit is a separate dish). Set "meal" on every part to "breakfast", "lunch", "dinner" or "snack": use the person's meal words, otherwise infer from the food and the logging time given (a main dish around midday is lunch; a dessert, frozen yogurt, fruit or drink had separately is a snack).
 2. If a restaurant, chain or brand is named (e.g. Super Simple, Subway, Saladstop!, Toast Box, 7-Eleven), look up that place's official nutrition information for the exact item when you can search. Prefer the official website, menu PDF or app. Otherwise use public food-composition data (Singapore HPB, USDA FoodData Central).
 3. Apply the person's adjustments literally: "less rice" ≈ half the usual portion, "a little sauce" ≈ a third, "some soup" ≈ half the bowl, "no X" = leave it out, "extra X" ≈ 1.5×.
 4. Err on the high side everywhere:
@@ -30,10 +30,10 @@ const SYSTEM = `You estimate the nutrition of meals for a person in Singapore wh
    - When a figure could fall in a range, use the upper end of the range.
    - Even with official figures, round up rather than down.
    Round calories up to the nearest 5 kcal.
-5. Give short, specific feedback for the weight-loss goal: what is good about the meal, and what is not good together with exactly which food or ingredient causes it (e.g. issue "High sodium", cause "the soup broth and chilli sauce"). If the description covers several meals, give this feedback per meal in "mealFeedback" (keys "breakfast", "lunch", "dinner", "snack") and leave "feedback" empty.
+5. Give short, specific feedback for the weight-loss goal: what is good about the meal, and what is not good together with exactly which food or ingredient causes it (e.g. issue "High sodium", cause "the soup broth and chilli sauce"). If the food spans more than one meal, give this feedback per meal in "mealFeedback" (keys "breakfast", "lunch", "dinner", "snack") and leave "feedback" empty.
 
 Reply with ONLY a JSON object, no other text, in exactly this shape:
-{"mealName": string, "confidence": "high"|"medium"|"low", "notes": string (one or two plain-language sentences on what you assumed; do not mention tools, search or models), "items": [{"name": string, "portion": string (with approximate grams), "basis": "published"|"database"|"estimate", "meal": ""|"breakfast"|"lunch"|"dinner"|"snack", "calories": number, "proteinG": number, "carbsG": number, "fatG": number, "fiberG": number, "sugarG": number, "sodiumMg": number, "saturatedFatG": number}], "feedback": {"good": [string], "bad": [{"issue": string, "cause": string}]}, "mealFeedback": {"<meal>": {"good": [string], "bad": [{"issue": string, "cause": string}]}}}
+{"mealName": string, "confidence": "high"|"medium"|"low", "notes": string (one or two plain-language sentences on what you assumed; do not mention tools, search or models), "items": [{"name": string, "portion": string (with approximate grams), "basis": "published"|"database"|"estimate", "dish": string, "meal": "breakfast"|"lunch"|"dinner"|"snack", "calories": number, "proteinG": number, "carbsG": number, "fatG": number, "fiberG": number, "sugarG": number, "sodiumMg": number, "saturatedFatG": number}], "feedback": {"good": [string], "bad": [{"issue": string, "cause": string}]}, "mealFeedback": {"<meal>": {"good": [string], "bad": [{"issue": string, "cause": string}]}}}
 Use "published" only for figures from the restaurant/brand itself. Use "high" confidence only when official figures matched the exact item and portion.`;
 
 interface Photo {
@@ -74,9 +74,13 @@ async function beginCall(token: string): Promise<void> {
 }
 
 function userText(description: string, photo?: Photo): string {
-  return description.trim()
+  const when = new Date().toLocaleString("en-SG", {
+    timeZone: "Asia/Singapore", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit",
+  });
+  const body = description.trim()
     ? `What I ate: ${description.trim()}${photo ? "\n(The photo shows the meal.)" : ""}`
     : "Estimate the meal in the photo.";
+  return `${body}\n(Logged ${when}, Singapore time.)`;
 }
 
 // ---------------------------------------------------------------- Claude

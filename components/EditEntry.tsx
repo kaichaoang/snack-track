@@ -33,7 +33,7 @@ export function EditEntry({
       <h3 style={{ margin: 0, textTransform: "none", color: "var(--text)" }}>Edit meal</h3>
       <label className="field">
         <span>What</span>
-        <textarea rows={2} value={e.name} onChange={(ev) => setE({ ...e, name: ev.target.value })} />
+        <textarea rows={3} value={e.name} onChange={(ev) => setE({ ...e, name: ev.target.value })} />
       </label>
       <label className="field">
         <span>Portion</span>

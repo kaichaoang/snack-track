@@ -55,3 +55,9 @@ test("per-meal feedback", () => {
   const e = parseClaudeReply('{"items":[{"name":"Toast","meal":"breakfast","calories":300}],"mealFeedback":{"Breakfast":{"good":["ok"],"bad":[]},"brunch":{"good":["x"]}}}');
   assert.deepEqual(e.mealFeedback, { breakfast: { good: ["ok"], bad: [] } });
 });
+
+test("prompt carries the logging time; items keep their dish", () => {
+  assert.match(claudePrompt("fish soup", new Date(2026, 9, 27, 12, 59)), /27 October/);
+  const e = parseClaudeReply('{"items":[{"name":"Fish","dish":"Grouper fish soup","meal":"lunch","calories":150},{"name":"Yogurt","dish":" Yole ","meal":"snack","calories":200},{"name":"x","dish":"","calories":1}]}');
+  assert.deepEqual(e.items.map((i) => i.dish), ["Grouper fish soup", "Yole", undefined]);
+});

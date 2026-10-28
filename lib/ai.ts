@@ -12,8 +12,10 @@ export interface AiItem {
   portion: string;
   basis: "published" | "database" | "estimate";
   nutrients: Nutrients;
-  /** Which meal it belongs to, when the description covers several meals. */
+  /** Which meal it belongs to. */
   meal?: MealSlot;
+  /** The dish or drink this part belongs to; each dish is logged as its own entry. */
+  dish?: string;
 }
 
 const MEALS: MealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
@@ -66,6 +68,7 @@ export function parseEstimate(raw: unknown): Omit<AiEstimate, "sources"> {
     portion: String(it.portion ?? "1 serving"),
     basis: it.basis === "published" || it.basis === "database" ? it.basis : "estimate",
     meal: MEALS.includes(String(it.meal).toLowerCase() as MealSlot) ? (String(it.meal).toLowerCase() as MealSlot) : undefined,
+    dish: typeof it.dish === "string" && it.dish.trim() ? it.dish.trim() : undefined,
     nutrients: {
       calories: num(it.calories),
       proteinG: num(it.proteinG),
@@ -116,24 +119,26 @@ export async function estimateMeal(token: string, description: string, photo?: P
 // ---------------------------------------------------------------- Ask Claude (copy & paste)
 
 /** A ready-to-send prompt for the Claude app, built from the user's description. */
-export function claudePrompt(description: string): string {
-  return `I'm in Singapore, logging food for a calorie-deficit weight-loss plan. Please estimate the nutrition of this meal:
+export function claudePrompt(description: string, now: Date = new Date()): string {
+  const when = now.toLocaleString("en-SG", { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
+  return `I'm in Singapore, logging food for a calorie-deficit weight-loss plan. It's ${when} as I log this. Please estimate the nutrition of what I ate:
 
 "${description.trim()}"
 
 How to estimate:
-- Split the meal into its parts (e.g. fish, vegetables, broth, rice, sauce, drink).
-- If I describe more than one meal (e.g. breakfast, lunch, dinner, snacks, or "this morning" / "tonight"), set "meal" on every item to "breakfast", "lunch", "dinner" or "snack". If it's a single meal, leave "meal" empty.
+- Split each dish into its parts (e.g. fish, vegetables, broth, rice, sauce).
+- Each separate dish or drink becomes its own log entry: set "dish" on every part to the dish it belongs to (e.g. all parts of a fish soup share "dish": "Grouper fish soup"; a frozen yogurt with fruit is a separate dish).
+- Set "meal" on every part to "breakfast", "lunch", "dinner" or "snack". Use the meal words I give; otherwise work it out from what I ate and the time I'm logging (e.g. a main dish around midday is lunch; a dessert, frozen yogurt, fruit or drink had separately is a snack).
 - If a restaurant, chain or brand is named, search for its official nutrition information for the exact item and use it.
 - Apply my wording literally: "less rice" ≈ half the usual portion, "a little" ≈ a third, "some soup" ≈ half the bowl, "no X" = none, "extra X" ≈ 1.5×.
 - Err on the high side: assume generous Singapore portions, count cooking oil, sauces and dressings even if I didn't mention them, assume drinks are sweetened unless I say kosong / no sugar, and use the upper end of any range.
 
-Also tell me, briefly and specifically for my weight-loss goal: what's good about this meal, and what's not good together with exactly which food or ingredient is causing it (e.g. high sodium → the soup broth and chilli sauce; lots of saturated fat → the fried shallots and pork lard). If I described several meals, give this feedback separately for each meal in "mealFeedback" (keys "breakfast", "lunch", "dinner", "snack") instead of "feedback".
+Also tell me, briefly and specifically for my weight-loss goal: what's good about this meal, and what's not good together with exactly which food or ingredient is causing it (e.g. high sodium → the soup broth and chilli sauce; lots of saturated fat → the fried shallots and pork lard). If what I ate spans more than one meal, give this feedback separately for each meal in "mealFeedback" (keys "breakfast", "lunch", "dinner", "snack") instead of "feedback".
 
 Give a short breakdown, then end your reply with this JSON block exactly (numbers only, calories rounded up to the nearest 5):
 
 \`\`\`json
-{"mealName": "", "confidence": "high|medium|low", "notes": "", "items": [{"name": "", "portion": "", "basis": "published|database|estimate", "meal": "", "calories": 0, "proteinG": 0, "carbsG": 0, "fatG": 0, "fiberG": 0, "sugarG": 0, "sodiumMg": 0, "saturatedFatG": 0}], "feedback": {"good": [""], "bad": [{"issue": "", "cause": ""}]}, "mealFeedback": {}}
+{"mealName": "", "confidence": "high|medium|low", "notes": "", "items": [{"name": "", "portion": "", "basis": "published|database|estimate", "dish": "", "meal": "breakfast|lunch|dinner|snack", "calories": 0, "proteinG": 0, "carbsG": 0, "fatG": 0, "fiberG": 0, "sugarG": 0, "sodiumMg": 0, "saturatedFatG": 0}], "feedback": {"good": [""], "bad": [{"issue": "", "cause": ""}]}, "mealFeedback": {}}
 \`\`\``;
 }
 

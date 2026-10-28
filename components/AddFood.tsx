@@ -15,8 +15,10 @@ interface Draft {
   portion: string;
   nutrients: Nutrients;
   include: boolean;
-  /** Set when the description covered several meals. */
+  /** Meal this part belongs to (from the AI). */
   meal?: MealSlot;
+  /** Dish this part belongs to; each dish is logged as its own entry. */
+  dish?: string;
 }
 
 interface Review {
@@ -33,13 +35,14 @@ interface Review {
 // The quick (non-AI) estimate uses typical values; nudge it up so it errs high.
 const QUICK_ESTIMATE_BUFFER = 1.15;
 
-const draft = (name: string, portion: string, nutrients: Nutrients, meal?: MealSlot): Draft => ({
+const draft = (name: string, portion: string, nutrients: Nutrients, meal?: MealSlot, dish?: string): Draft => ({
   key: newId(),
   name,
   portion,
   nutrients: { ...nutrients },
   include: true,
   meal,
+  dish,
 });
 
 const cap = (m: string) => m[0].toUpperCase() + m.slice(1);
@@ -78,29 +81,36 @@ export function AddFood({
     const included = review.drafts.filter((d) => d.include);
     if (included.length === 0) return;
     if (review.combineAs) {
-      // One entry per meal: a description covering breakfast and lunch becomes two entries.
-      const groups = new Map<MealSlot, Draft[]>();
+      // One entry per dish, under its meal: "fish soup with less rice, then Yole"
+      // becomes two entries. Parts without a dish are grouped per meal.
+      const groups = new Map<string, { slot: MealSlot; dish?: string; parts: Draft[] }>();
       for (const d of included) {
         const slot = d.meal ?? meal;
-        groups.set(slot, [...(groups.get(slot) ?? []), d]);
+        const k = `${slot}|${d.dish ?? ""}`;
+        if (!groups.has(k)) groups.set(k, { slot, dish: d.dish, parts: [] });
+        groups.get(k)!.parts.push(d);
       }
-      const ordered = MEAL_SLOTS.filter((m) => groups.has(m));
+      const ordered = [...groups.values()].sort((a, b) => MEAL_SLOTS.indexOf(a.slot) - MEAL_SLOTS.indexOf(b.slot));
+      const feedbackGiven = new Set<MealSlot>();
       onSave(
-        ordered.map((slot, i) => {
-          const ds = groups.get(slot)!;
-          const names = ds.map((d) => d.name.split(" (")[0]).join(", ");
+        ordered.map((g, i) => {
+          const names = g.parts.map((d) => d.name.split(" (")[0]).join(", ");
+          // Feedback goes on the first entry of each meal so it isn't repeated.
+          const fb = feedbackGiven.has(g.slot)
+            ? undefined
+            : review.mealFeedback?.[g.slot] ?? (new Set(ordered.map((x) => x.slot)).size === 1 ? review.feedback : undefined);
+          feedbackGiven.add(g.slot);
           return {
             id: newId(),
             date,
             createdAt: now + i,
-            meal: slot,
-            name: ordered.length === 1 ? review.combineAs! : names,
+            meal: g.slot,
+            name: g.dish ?? (ordered.length === 1 ? review.combineAs! : names),
             portion: (multiplier === 1 ? "" : `×${multiplier} · `) + names,
-            nutrients: scaleNutrients(sumNutrients(ds.map((d) => d.nutrients)), multiplier),
+            nutrients: scaleNutrients(sumNutrients(g.parts.map((d) => d.nutrients)), multiplier),
             origin: review.origin,
             sources: review.sources.length ? review.sources : undefined,
-            // Per-meal feedback if given; overall feedback only fits when it's a single meal.
-            feedback: review.mealFeedback?.[slot] ?? (ordered.length === 1 ? review.feedback : undefined),
+            feedback: fb,
           };
         }),
       );
@@ -227,7 +237,7 @@ function AskClaude({ text, onUse }: { text: string; onUse: (r: Review) => void }
         feedback: e.feedback,
         mealFeedback: e.mealFeedback,
         combineAs: text.trim() || e.mealName,
-        drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal)),
+        drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal, i.dish)),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read that reply.");
@@ -308,7 +318,7 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
       feedback: ai.feedback,
       mealFeedback: ai.mealFeedback,
       combineAs: name,
-      drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal)),
+      drafts: ai.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal, i.dish)),
     });
   }
 
@@ -390,7 +400,7 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
             <div className="entry" key={n}>
               <div className="grow">
                 <div className="name">{i.name}</div>
-                <div className="meta">{i.meal ? `${cap(i.meal)} · ` : ""}{i.portion} · {BASIS_LABEL[i.basis]}</div>
+                <div className="meta">{[i.meal && cap(i.meal), i.dish, i.portion, BASIS_LABEL[i.basis]].filter(Boolean).join(" · ")}</div>
               </div>
               <span className="kcal">{Math.round(i.nutrients.calories)}</span>
             </div>
@@ -486,7 +496,8 @@ function ReviewPanel({
   const total = scaleNutrients(sumNutrients(review.drafts.filter((d) => d.include).map((d) => d.nutrients)), multiplier);
   const manual = review.origin === "manual";
   // Each item picks its own meal when the description covered several meals.
-  const multiMeal = review.drafts.some((d) => d.meal);
+  const multiMeal = review.drafts.some((d) => d.meal || d.dish);
+  const entryCount = new Set(review.drafts.filter((d) => d.include).map((d) => `${d.meal ?? meal}|${d.dish ?? ""}`)).size;
 
   return (
     <>
@@ -526,6 +537,7 @@ function ReviewPanel({
 
         {review.drafts.map((d) => (
           <div className="item-edit" key={d.key} style={{ opacity: d.include ? 1 : 0.5 }}>
+            {d.dish && <div className="small muted" style={{ marginBottom: 6 }}>{d.dish}</div>}
             <div className="row">
               {review.drafts.length > 1 && (
                 <input type="checkbox" checked={d.include} onChange={(e) => updateDraft(d.key, { include: e.target.checked })} style={{ width: "auto" }} aria-label="Include" />
@@ -563,7 +575,9 @@ function ReviewPanel({
 
       <section className="card stack">
         {multiMeal ? (
-          <p className="small muted" style={{ margin: 0 }}>Logged as one entry per meal, as chosen on each item.</p>
+          <p className="small muted" style={{ margin: 0 }}>
+            Logs {entryCount} {entryCount === 1 ? "entry" : "entries"}, one per dish, under the meal chosen on each item.
+          </p>
         ) : (
         <label className="field">
           <span>Meal</span>
