@@ -4,6 +4,7 @@ import { useState } from "react";
 import { EditEntry } from "./EditEntry";
 import { IconButton } from "./Icons";
 import { FeedbackView } from "./FeedbackView";
+import { ExerciseEdit } from "./ExerciseEdit";
 import { localDateKey, sumNutrients, type Targets } from "@/lib/nutrition";
 import { MEAL_SLOTS, type FoodEntry } from "@/lib/store";
 
@@ -115,8 +116,13 @@ export function TodayView({
 }) {
   // Entry being edited in place in the list (like SplitDumb's expense list).
   const [editingId, setEditingId] = useState<string | null>(null);
-  const day = entries.filter((e) => e.date === date);
+  const all = entries.filter((e) => e.date === date);
+  const day = all.filter((e) => e.kind !== "exercise");
+  const workouts = all.filter((e) => e.kind === "exercise").sort((a, b) => a.createdAt - b.createdAt);
   const total = sumNutrients(day.map((e) => e.nutrients));
+  // Exercise burn is netted off calories only; nutrients stay as eaten.
+  const burned = workouts.reduce((s, e) => s + e.nutrients.calories, 0);
+  const net = total.calories - burned;
   const isToday = date === localDateKey();
 
   return (
@@ -133,16 +139,19 @@ export function TodayView({
 
       <section className="card">
         <div className="ring-wrap">
-          <Ring eaten={total.calories} target={t.calories} />
+          <Ring eaten={net} target={t.calories} />
           <div className="stats">
             <div className="stat"><span className="muted">Target</span><b>{Math.round(t.calories)}</b></div>
             <div className="stat"><span className="muted">Eaten</span><b>{Math.round(total.calories)}</b></div>
-            <div className="stat"><span className="muted">Maintenance</span><b>{Math.round(t.tdee)}</b></div>
+            {burned > 0 && (
+              <>
+                <div className="stat"><span className="muted">Exercise</span><b style={{ color: "var(--accent)" }}>−{Math.round(burned)}</b></div>
+                <div className="stat"><span className="muted">Net</span><b>{Math.round(net)}</b></div>
+              </>
+            )}
             <div className="stat">
               <span className="muted">Under maintenance</span>
-              <b style={{ color: total.calories <= t.tdee ? "var(--accent)" : "var(--danger)" }}>
-                {Math.round(t.tdee - total.calories)}
-              </b>
+              <b style={{ color: net <= t.tdee ? "var(--accent)" : "var(--danger)" }}>{Math.round(t.tdee - net)}</b>
             </div>
           </div>
         </div>
@@ -226,6 +235,45 @@ export function TodayView({
             </div>
           );
         })}
+      </section>
+
+      <section className="card">
+        <div className="row between">
+          <h2 style={{ margin: 0 }}>Exercise</h2>
+          {burned > 0 && <span className="num muted">−{Math.round(burned)} kcal</span>}
+        </div>
+        {workouts.length === 0 && <p className="muted small" style={{ marginBottom: 0 }}>No exercise logged. Add it from the + tab.</p>}
+        {workouts.map((e) =>
+          e.id === editingId ? (
+            <ExerciseEdit
+              key={e.id}
+              entry={e}
+              onCancel={() => setEditingId(null)}
+              onSave={(updated) => {
+                onUpdate(updated);
+                setEditingId(null);
+              }}
+            />
+          ) : (
+            <div className="entry" key={e.id}>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div className="name">{e.name}</div>
+                <div className="meta">{[e.portion, `−${Math.round(e.nutrients.calories)} kcal`].filter(Boolean).join(" · ")}</div>
+              </div>
+              <div className="row-actions">
+                <IconButton icon="edit" label={`Edit ${e.name}`} onClick={() => setEditingId(e.id)} />
+                <IconButton
+                  icon="trash"
+                  danger
+                  label={`Delete ${e.name}`}
+                  onClick={() => {
+                    if (window.confirm(`Delete "${e.name}"?`)) onDelete(e.id);
+                  }}
+                />
+              </div>
+            </div>
+          ),
+        )}
       </section>
     </>
   );

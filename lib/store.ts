@@ -26,6 +26,8 @@ export interface FoodEntry {
   origin: "ai" | "described" | "dish" | "database" | "manual";
   place?: string;
   sources?: Source[];
+  /** "exercise" entries hold calories burned in nutrients.calories (netted off the day). */
+  kind?: "food" | "exercise";
   /** AI verdict: what's good, and what isn't plus its cause. */
   feedback?: { good: string[]; bad: { issue: string; cause: string }[] };
 }
@@ -128,6 +130,8 @@ export function useEntries() {
 export function useWeights() {
   return useStored<WeightEntry[]>(KEYS.weights, NO_WEIGHTS);
 }
+
+export const isExercise = (e: FoodEntry) => e.kind === "exercise";
 
 export function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto

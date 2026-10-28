@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { EMPTY_NUTRIENTS, scaleNutrients, sumNutrients, type Nutrients } from "@/lib/nutrition";
 import { defaultMealSlot, MEAL_SLOTS, newId, type FoodEntry, type MealSlot, type Source } from "@/lib/store";
-import { claudePrompt, claudeUrl, estimateMeal, parseClaudeReply, type AiEstimate, type AiItem, type Feedback } from "@/lib/ai";
+import { claudePrompt, claudeUrl, estimateExercise, estimateMeal, parseAnyReply, type AiEstimate, type AiItem, type Feedback } from "@/lib/ai";
+import { exercisePrompt, quickExercise, type ExerciseItem } from "@/lib/exercise";
 import { FeedbackView } from "./FeedbackView";
 import { useAiEnabled, useSession } from "@/lib/sync";
 import { resizeImage } from "@/lib/image";
@@ -63,17 +64,62 @@ function MealFeedbackList({ byMeal }: { byMeal: Partial<Record<MealSlot, Feedbac
 export function AddFood({
   date,
   entries,
+  weightKg,
   onSave,
   onCancel,
 }: {
   date: string;
   entries: FoodEntry[];
+  weightKg: number;
   onSave: (e: FoodEntry[]) => void;
   onCancel: () => void;
 }) {
+  const [mode, setMode] = useState<"food" | "exercise">("food");
+  const [text, setText] = useState("");
+  const [exText, setExText] = useState("");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());
   const [review, setReview] = useState<Review | null>(null);
+  const [exReview, setExReview] = useState<ExReview | null>(null);
   const [multiplier, setMultiplier] = useState(1);
+
+  function saveExercise() {
+    if (!exReview) return;
+    const now = Date.now();
+    onSave(
+      exReview.items
+        .filter((x) => x.name.trim() && x.calories > 0)
+        .map((x, i) => ({
+          id: newId(),
+          date,
+          createdAt: now + i,
+          meal: "snack" as MealSlot,
+          kind: "exercise" as const,
+          name: x.name.trim(),
+          portion: x.duration,
+          nutrients: { ...EMPTY_NUTRIENTS, calories: x.calories },
+          origin: exReview.origin,
+        })),
+    );
+  }
+
+  const fromPaste = (r: ReturnType<typeof parseAnyReply>) => {
+    if (r.kind === "exercise") {
+      setMode("exercise");
+      setExReview({ origin: "ai", notes: r.estimate.notes, items: r.estimate.items });
+      return;
+    }
+    const e = r.estimate;
+    setMode("food");
+    setReview({
+      origin: "ai",
+      sources: [],
+      notes: e.notes,
+      feedback: e.feedback,
+      mealFeedback: e.mealFeedback,
+      combineAs: text.trim() || e.mealName,
+      drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal, i.dish)),
+    });
+  };
 
   function save() {
     if (!review) return;
@@ -139,22 +185,49 @@ export function AddFood({
   return (
     <>
       <div className="row between" style={{ marginBottom: 8 }}>
-        <b>Add food</b>
+        <b>Add</b>
         <button className="ghost" onClick={onCancel}>Cancel</button>
       </div>
 
-      {!review && (
+      {!review && !exReview && (
         <>
-          <DescribePanel onUse={setReview} />
-          <button
-            className="block"
-            style={{ marginBottom: 12 }}
-            onClick={() => setReview({ origin: "manual", sources: [], drafts: [draft("", "1 serving", EMPTY_NUTRIENTS)] })}
-          >
-            ✏️ Log manually
-          </button>
-          <RecentPanel entries={entries} onPick={relog} />
+          <div className="seg" role="group" aria-label="Food or exercise" style={{ marginBottom: 12 }}>
+            <button aria-pressed={mode === "food"} onClick={() => setMode("food")}>🍽 Food</button>
+            <button aria-pressed={mode === "exercise"} onClick={() => setMode("exercise")}>🏃 Exercise</button>
+          </div>
+          {mode === "food" ? (
+            <>
+              <DescribePanel text={text} setText={setText} onUse={setReview} />
+              <AskClaudeLink prompt={claudePrompt(text)} />
+              <PasteReply onParsed={fromPaste} />
+              <button
+                className="block"
+                style={{ marginBottom: 12 }}
+                onClick={() => setReview({ origin: "manual", sources: [], drafts: [draft("", "1 serving", EMPTY_NUTRIENTS)] })}
+              >
+                ✏️ Log manually
+              </button>
+              <RecentPanel entries={entries.filter((e) => e.kind !== "exercise")} onPick={relog} />
+            </>
+          ) : (
+            <>
+              <ExercisePanel text={exText} setText={setExText} weightKg={weightKg} onUse={setExReview} />
+              <AskClaudeLink prompt={exercisePrompt(exText, weightKg)} />
+              <PasteReply onParsed={fromPaste} />
+              <button
+                className="block"
+                style={{ marginBottom: 12 }}
+                onClick={() => setExReview({ origin: "manual", notes: "", items: [{ name: "", duration: "", calories: 0 }] })}
+              >
+                ✏️ Log manually
+              </button>
+            </>
+          )}
         </>
+      )}
+
+      {exReview && (
+        <ExerciseReviewPanel review={exReview} setReview={setExReview} onBack={() => setExReview(null)} onSave={saveExercise} />
       )}
 
       {review && (
@@ -205,87 +278,229 @@ function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: Fo
   );
 }
 
-/** Copy a ready-made prompt into Claude, then paste Claude's answer back. */
-function AskClaude({ text, onUse }: { text: string; onUse: (r: Review) => void }) {
-  const [open, setOpen] = useState(false);
+/** Opens Claude with a ready-made question (also copied, in case Claude opens empty). */
+function AskClaudeLink({ prompt }: { prompt: string }) {
   const [copied, setCopied] = useState(false);
+  return (
+    <div className="stack" style={{ marginBottom: 12 }}>
+      <a
+        className="button block"
+        href={claudeUrl(prompt)}
+        target="_blank"
+        rel="noreferrer"
+        onClick={() => navigator.clipboard?.writeText(prompt).then(() => setCopied(true), () => setCopied(false))}
+      >
+        Ask Claude ↗
+      </a>
+      {copied && (
+        <p className="small muted" style={{ margin: 0 }}>
+          The question is copied. If Claude opens without it, paste it in. Then copy Claude&apos;s whole reply and paste it below.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Paste a reply from Claude (meal or exercise) at any time. */
+function PasteReply({ onParsed }: { onParsed: (r: ReturnType<typeof parseAnyReply>) => void }) {
   const [reply, setReply] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const prompt = claudePrompt(text);
-
-  function copy() {
-    // Fire-and-forget: the link opens Claude in the same tap.
-    navigator.clipboard?.writeText(prompt).then(() => setCopied(true), () => setCopied(false));
-    setOpen(true);
-  }
 
   async function pasteFromClipboard() {
+    setError(null);
     try {
-      setReply(await navigator.clipboard.readText());
+      const t = await navigator.clipboard.readText();
+      setReply(t);
+      if (t.trim()) use(t);
     } catch {
-      setError("Couldn't read the clipboard. Long-press the box below and choose Paste.");
+      setError("Couldn't read the clipboard. Long-press the box and choose Paste.");
     }
   }
 
-  function useReply() {
+  function use(t = reply) {
     try {
-      const e = parseClaudeReply(reply);
-      onUse({
-        origin: "ai",
-        sources: [],
-        notes: e.notes,
-        feedback: e.feedback,
-        mealFeedback: e.mealFeedback,
-        combineAs: text.trim() || e.mealName,
-        drafts: e.items.map((i) => draft(i.name, i.portion, i.nutrients, i.meal, i.dish)),
-      });
+      onParsed(parseAnyReply(t));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read that reply.");
     }
   }
 
   return (
-    <div className="ask-claude stack">
-      <a className="button block" href={claudeUrl(prompt)} target="_blank" rel="noreferrer" onClick={copy}>
-        Ask Claude ↗
-      </a>
-      {open && (
-        <>
-          <p className="small muted" style={{ margin: 0 }}>
-            {copied ? "The question is copied. " : ""}If Claude opens without it, paste it in. When Claude answers, copy its
-            whole reply and paste it here.
-          </p>
-          <textarea
-            rows={4}
-            value={reply}
-            onChange={(e) => {
-              setReply(e.target.value);
-              setError(null);
-            }}
-            placeholder="Paste Claude's reply"
-          />
-          {error && <div className="error">{error}</div>}
-          <div className="row">
-            <button className="grow" onClick={pasteFromClipboard}>Paste</button>
-            <button className="primary grow" disabled={!reply.trim()} onClick={useReply}>Use Claude&apos;s numbers</button>
-          </div>
-          <button className="ghost small" onClick={() => navigator.clipboard?.writeText(prompt).then(() => setCopied(true))}>
-            Copy the question again
-          </button>
-        </>
+    <section className="card stack">
+      <label className="field">
+        <span>Paste a reply from Claude</span>
+        <textarea
+          rows={3}
+          value={reply}
+          onChange={(e) => {
+            setReply(e.target.value);
+            setError(null);
+          }}
+          placeholder="Paste Claude's whole reply here"
+        />
+      </label>
+      {error && <div className="error">{error}</div>}
+      <div className="row">
+        <button className="grow" onClick={pasteFromClipboard}>Paste</button>
+        <button className="primary grow" disabled={!reply.trim()} onClick={() => use()}>Use Claude&apos;s numbers</button>
+      </div>
+    </section>
+  );
+}
+
+interface ExReview {
+  origin: FoodEntry["origin"];
+  notes: string;
+  items: ExerciseItem[];
+}
+
+function ExercisePanel({
+  text,
+  setText,
+  weightKg,
+  onUse,
+}: {
+  text: string;
+  setText: (s: string) => void;
+  weightKg: number;
+  onUse: (r: ExReview) => void;
+}) {
+  const [session] = useSession();
+  const aiEnabled = useAiEnabled();
+  const canUseAi = !!session && aiEnabled;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const quick = quickExercise(text, weightKg);
+  const showQuick = !canUseAi || !!error;
+
+  async function askAi() {
+    if (!session) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const e = await estimateExercise(session.token, text, weightKg);
+      onUse({ origin: "ai", notes: e.notes, items: e.items });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't estimate that. Try again, or log manually.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card stack">
+      <label className="field">
+        <span>What exercise did you do?</span>
+        <textarea
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(null);
+          }}
+          placeholder="e.g. 45 min badminton, 20 min brisk walk"
+          className="describe"
+          rows={4}
+        />
+      </label>
+      {canUseAi && (
+        <button className="primary block" disabled={busy || !text.trim()} onClick={askAi}>
+          {busy ? (
+            <>
+              <span className="spinner" /> Estimating…
+            </>
+          ) : (
+            "✨ Estimate"
+          )}
+        </button>
       )}
-    </div>
+      {error && <div className="error">{error}</div>}
+      {showQuick && quick.length > 0 && (
+        <div>
+          {quick.map((x, i) => (
+            <div className="entry" key={i}>
+              <div className="grow">
+                <div className="name">{x.name}</div>
+                <div className="meta">{x.duration}</div>
+              </div>
+              <span className="kcal">−{x.calories}</span>
+            </div>
+          ))}
+          <button className={canUseAi ? "block" : "primary block"} style={{ marginTop: 8 }} onClick={() => onUse({ origin: "described", notes: "", items: quick })}>
+            {canUseAi ? "Use quick estimate instead" : "Review & log"}
+          </button>
+        </div>
+      )}
+      {showQuick && text.trim() && quick.length === 0 && (
+        <p className="small muted" style={{ margin: 0 }}>Add how long you did it (e.g. &quot;30 min run&quot;), or ask Claude.</p>
+      )}
+      <p className="small muted" style={{ margin: 0 }}>
+        Burn is estimated on the low side and counts only what&apos;s above resting, so it&apos;s netted off your day without
+        double-counting.
+      </p>
+    </section>
+  );
+}
+
+function ExerciseReviewPanel({
+  review,
+  setReview,
+  onBack,
+  onSave,
+}: {
+  review: ExReview;
+  setReview: (r: ExReview) => void;
+  onBack: () => void;
+  onSave: () => void;
+}) {
+  const update = (i: number, patch: Partial<ExerciseItem>) =>
+    setReview({ ...review, items: review.items.map((x, n) => (n === i ? { ...x, ...patch } : x)) });
+  const total = review.items.reduce((s, x) => s + (x.calories || 0), 0);
+  return (
+    <>
+      <section className="card">
+        <div style={{ fontSize: "1.8rem", fontWeight: 700 }} className="num">
+          −{Math.round(total)} <span className="muted small">kcal burned</span>
+        </div>
+        {review.notes && <p className="small" style={{ margin: "6px 0 0" }}>{review.notes}</p>}
+      </section>
+      <section className="card stack">
+        {review.items.map((x, i) => (
+          <div className="item-edit stack" key={i}>
+            <label className="field">
+              <span>Activity</span>
+              <input value={x.name} placeholder="e.g. Badminton" onChange={(e) => update(i, { name: e.target.value })} />
+            </label>
+            <div className="grid2">
+              <label className="field">
+                <span>Duration</span>
+                <input value={x.duration} placeholder="e.g. 45 min" onChange={(e) => update(i, { duration: e.target.value })} />
+              </label>
+              <label className="field">
+                <span>kcal burned</span>
+                <input type="number" inputMode="numeric" value={x.calories || ""} placeholder="0" onChange={(e) => update(i, { calories: parseFloat(e.target.value) || 0 })} />
+              </label>
+            </div>
+          </div>
+        ))}
+        <button onClick={() => setReview({ ...review, items: [...review.items, { name: "", duration: "", calories: 0 }] })}>+ Add another activity</button>
+        <div className="row">
+          <button className="grow" onClick={onBack}>Back</button>
+          <button className="primary grow" disabled={!review.items.some((x) => x.name.trim() && x.calories > 0)} onClick={onSave}>
+            Log it
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 
 const BASIS_LABEL: Record<AiItem["basis"], string> = { published: "Official figures", database: "Standard figures", estimate: "Estimate" };
 
-function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
+function DescribePanel({ text, setText, onUse }: { text: string; setText: (s: string) => void; onUse: (r: Review) => void }) {
   const [session] = useSession();
   const aiEnabled = useAiEnabled();
   const canUseAi = !!session && aiEnabled;
   const fileRef = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState("");
   const [photo, setPhoto] = useState<{ data: string; mediaType: string; previewUrl: string } | null>(null);
   const [ai, setAi] = useState<AiEstimate | null>(null);
   const [busy, setBusy] = useState(false);
@@ -456,7 +671,6 @@ function DescribePanel({ onUse }: { onUse: (r: Review) => void }) {
         </button>
       )}
 
-      {text.trim() && <AskClaude text={text} onUse={onUse} />}
     </section>
   );
 }

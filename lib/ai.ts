@@ -6,6 +6,7 @@
 import type { Nutrients } from "./nutrition.ts";
 import type { MealSlot, Source } from "./store.ts";
 import { SUPABASE_KEY, SUPABASE_URL } from "./config.ts";
+import { parseExercise, type ExerciseEstimate } from "./exercise.ts";
 
 export interface AiItem {
   name: string;
@@ -116,6 +117,22 @@ export async function estimateMeal(token: string, description: string, photo?: P
   return { ...parseEstimate(body.estimate), sources: Array.isArray(body.sources) ? body.sources : [] };
 }
 
+export async function estimateExercise(token: string, description: string, weightKg: number): Promise<ExerciseEstimate> {
+  let res: Response;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/snack-estimate`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ token, description, mode: "exercise", weightKg }),
+    });
+  } catch {
+    throw new Error("You're offline. Log it manually for now.");
+  }
+  const body = (await res.json().catch(() => null)) as { exercise?: unknown; error?: string } | null;
+  if (!res.ok || !body || body.error) throw new Error(body?.error ?? "Couldn't estimate that. Try again, or log manually.");
+  return parseExercise(body.exercise);
+}
+
 // ---------------------------------------------------------------- Ask Claude (copy & paste)
 
 /** A ready-to-send prompt for the Claude app, built from the user's description. */
@@ -123,7 +140,7 @@ export function claudePrompt(description: string, now: Date = new Date()): strin
   const when = now.toLocaleString("en-SG", { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
   return `I'm in Singapore, logging food for a calorie-deficit weight-loss plan. It's ${when} as I log this. Please estimate the nutrition of what I ate:
 
-"${description.trim()}"
+"${description.trim() || "(describe what you ate here)"}"
 
 How to estimate:
 - Split each dish into its parts (e.g. fish, vegetables, broth, rice, sauce).
@@ -147,17 +164,53 @@ export function claudeUrl(prompt: string): string {
   return `https://claude.ai/new?q=${encodeURIComponent(prompt)}`;
 }
 
-/** Reads the estimate out of Claude's pasted reply (the last JSON object in it). */
-export function parseClaudeReply(reply: string): Omit<AiEstimate, "sources"> {
+/** JSON objects found in a pasted reply, last first (code fences optional, smart quotes ok). */
+function jsonObjects(reply: string): unknown[] {
   const text = reply.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
   const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]);
-  const candidates = fenced.length ? fenced.reverse() : [text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)];
+  const candidates = fenced.length ? fenced.reverse() : [text];
+  const out: unknown[] = [];
   for (const c of candidates) {
     const start = c.indexOf("{");
     const end = c.lastIndexOf("}");
     if (start < 0 || end <= start) continue;
     try {
-      return parseEstimate(JSON.parse(c.slice(start, end + 1)));
+      out.push(JSON.parse(c.slice(start, end + 1)));
+    } catch {
+      // not JSON; try the next block
+    }
+  }
+  return out;
+}
+
+/** Reads the meal estimate out of Claude's pasted reply. */
+export function parseClaudeReply(reply: string): Omit<AiEstimate, "sources"> {
+  for (const obj of jsonObjects(reply)) {
+    try {
+      return parseEstimate(obj);
+    } catch {
+      // try the next block
+    }
+  }
+  throw new Error("Couldn't find the numbers in that reply. Copy Claude's whole answer, including the block at the end.");
+}
+
+export type PastedReply =
+  | { kind: "food"; estimate: Omit<AiEstimate, "sources"> }
+  | { kind: "exercise"; estimate: ExerciseEstimate };
+
+/** A pasted Claude reply may be a meal estimate or an exercise estimate. */
+export function parseAnyReply(reply: string): PastedReply {
+  for (const obj of jsonObjects(reply)) {
+    if (obj && typeof obj === "object" && "exercises" in obj) {
+      try {
+        return { kind: "exercise", estimate: parseExercise(obj) };
+      } catch {
+        // fall through
+      }
+    }
+    try {
+      return { kind: "food", estimate: parseEstimate(obj) };
     } catch {
       // try the next block
     }

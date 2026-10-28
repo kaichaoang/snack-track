@@ -5,8 +5,9 @@
 // Provider: Claude when the ANTHROPIC_API_KEY secret is set, otherwise Gemini
 // (GEMINI_API_KEY). The app doesn't know or care which one answered.
 //
-// Request:  POST { token, description, photo?: { data: base64, mimeType } }
-// Response: { estimate: { mealName, confidence, notes, items[] }, sources[] } | { error }
+// Request:  POST { token, description, photo?: { data: base64, mimeType } }  (meal)
+//           POST { token, description, mode: "exercise", weightKg }          (exercise)
+// Response: { estimate, sources[] } for a meal, { exercise } for exercise, or { error }
 
 import Anthropic from "npm:@anthropic-ai/sdk@1.3.0";
 
@@ -35,6 +36,15 @@ const SYSTEM = `You estimate the nutrition of meals for a person in Singapore wh
 Reply with ONLY a JSON object, no other text, in exactly this shape:
 {"mealName": string, "confidence": "high"|"medium"|"low", "notes": string (one or two plain-language sentences on what you assumed; do not mention tools, search or models), "items": [{"name": string, "portion": string (with approximate grams), "basis": "published"|"database"|"estimate", "dish": string, "meal": "breakfast"|"lunch"|"dinner"|"snack", "calories": number, "proteinG": number, "carbsG": number, "fatG": number, "fiberG": number, "sugarG": number, "sodiumMg": number, "saturatedFatG": number}], "feedback": {"good": [string], "bad": [{"issue": string, "cause": string}]}, "mealFeedback": {"<meal>": {"good": [string], "bad": [{"issue": string, "cause": string}]}}}
 Use "published" only for figures from the restaurant/brand itself. Use "high" confidence only when official figures matched the exact item and portion.`;
+
+const EXERCISE_SYSTEM = `You estimate calories burned by exercise for a person in Singapore tracking a calorie deficit. Over-counting burn quietly cancels a deficit, so be conservative.
+
+- One item per activity, with its duration.
+- Count only calories burned ABOVE resting (resting burn is already in their maintenance calories): use (MET - 1) x body weight in kg x hours.
+- Assume moderate effort unless told otherwise, and use the lower end of any range. Fitness trackers and machines overestimate; don't copy their numbers without discounting.
+- Round calories down to the nearest 5.
+
+Reply with ONLY a JSON object, no other text: {"exercises": [{"name": string, "duration": string, "calories": number}], "notes": string (one short plain-language sentence on what you assumed)}`;
 
 interface Photo {
   data: string;
@@ -85,7 +95,7 @@ function userText(description: string, photo?: Photo): string {
 
 // ---------------------------------------------------------------- Claude
 
-async function withClaude(apiKey: string, description: string, photo?: Photo): Promise<Result> {
+async function withClaude(apiKey: string, system: string, text0: string, photo?: Photo): Promise<Result> {
   const client = new Anthropic({ apiKey });
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
   if (photo) {
@@ -94,7 +104,7 @@ async function withClaude(apiKey: string, description: string, photo?: Photo): P
       source: { type: "base64", media_type: photo.mimeType as "image/jpeg", data: photo.data },
     });
   }
-  content.push({ type: "text", text: userText(description, photo) });
+  content.push({ type: "text", text: text0 });
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content }];
 
   const sources = new Map<string, Source>();
@@ -108,7 +118,7 @@ async function withClaude(apiKey: string, description: string, photo?: Photo): P
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
       output_config: { effort: "medium" },
-      system: SYSTEM,
+      system,
       tools: [
         {
           type: "web_search_20260209",
@@ -178,8 +188,8 @@ interface GeminiResponse {
   promptFeedback?: { blockReason?: string };
 }
 
-async function geminiCall(key: string, model: string, parts: unknown[], withSearch: boolean): Promise<GeminiResponse> {
-  const system = withSearch ? SYSTEM : `${SYSTEM}\n\nYou cannot search for this request: use your own knowledge of published figures.`;
+async function geminiCall(key: string, model: string, base: string, parts: unknown[], withSearch: boolean): Promise<GeminiResponse> {
+  const system = withSearch ? base : `${base}\n\nYou cannot search for this request: use your own knowledge of published figures.`;
   let res: Response;
   try {
     res = await fetch(`${GEMINI}/models/${encodeURIComponent(model)}:generateContent`, {
@@ -199,10 +209,10 @@ async function geminiCall(key: string, model: string, parts: unknown[], withSear
   return (await res.json()) as GeminiResponse;
 }
 
-async function withGemini(key: string, description: string, photo?: Photo): Promise<Result> {
+async function withGemini(key: string, system: string, text0: string, photo?: Photo): Promise<Result> {
   const parts: unknown[] = [];
   if (photo) parts.push({ inline_data: { mime_type: photo.mimeType, data: photo.data } });
-  parts.push({ text: userText(description, photo) });
+  parts.push({ text: text0 });
 
   const all = await listGeminiModels(key);
   const models = [...new Set([preferredModel, ...all].filter((m): m is string => !!m))].slice(0, 8);
@@ -211,13 +221,13 @@ async function withGemini(key: string, description: string, photo?: Photo): Prom
       let body: GeminiResponse | null = null;
       if (!searchUnavailable) {
         try {
-          body = await geminiCall(key, model, parts, true);
+          body = await geminiCall(key, model, system, parts, true);
         } catch (e) {
           if (!(e instanceof HttpError && e.status === 429)) throw e;
           searchUnavailable = true; // no search allowance on this key
         }
       }
-      body ??= await geminiCall(key, model, parts, false);
+      body ??= await geminiCall(key, model, system, parts, false);
       preferredModel = model;
       if (body.promptFeedback?.blockReason) throw new UserError("Couldn't estimate that. Try describing the meal differently.");
       const cand = body.candidates?.[0];
@@ -242,23 +252,31 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
-    const body = (await req.json().catch(() => null)) as { token?: string; description?: string; photo?: Photo } | null;
+    const body = (await req.json().catch(() => null)) as
+      | { token?: string; description?: string; photo?: Photo; mode?: string; weightKg?: number }
+      | null;
+    const exercise = body?.mode === "exercise";
     const token = body?.token ?? "";
     const description = String(body?.description ?? "").slice(0, 2000);
     const photo = body?.photo && typeof body.photo.data === "string" && /^image\/(jpeg|png|webp)$/.test(body.photo.mimeType)
       ? body.photo
       : undefined;
     if (!token) throw new UserError("Please sign in to use AI estimates.", 401);
-    if (!description.trim() && !photo) throw new UserError("Describe the meal or add a photo.");
+    if (!description.trim() && !photo) throw new UserError(exercise ? "Describe your exercise." : "Describe the meal or add a photo.");
     if (photo && photo.data.length > 7_000_000) throw new UserError("That photo is too large.");
 
     await beginCall(token);
 
     const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
     const geminiKey = Deno.env.get("GEMINI_API_KEY");
+    const kg = Number(body?.weightKg);
+    const system = exercise ? EXERCISE_SYSTEM : SYSTEM;
+    const text0 = exercise
+      ? `Exercise: ${description.trim()}\nMy weight: ${Number.isFinite(kg) && kg > 20 ? Math.round(kg) : 70} kg.`
+      : userText(description, photo);
     let result: Result;
-    if (claudeKey) result = await withClaude(claudeKey, description, photo);
-    else if (geminiKey) result = await withGemini(geminiKey, description, photo);
+    if (claudeKey) result = await withClaude(claudeKey, system, text0, exercise ? undefined : photo);
+    else if (geminiKey) result = await withGemini(geminiKey, system, text0, exercise ? undefined : photo);
     else throw new UserError("AI estimates aren't set up yet.", 503);
 
     const start = result.text.indexOf("{");
@@ -270,7 +288,7 @@ Deno.serve(async (req) => {
     } catch {
       throw new UserError("Couldn't estimate that. Please try again.", 502);
     }
-    return json({ estimate, sources: result.sources.slice(0, 6) });
+    return json(exercise ? { exercise: estimate } : { estimate, sources: result.sources.slice(0, 6) });
   } catch (e) {
     if (e instanceof UserError) return json({ error: e.message }, e.status);
     if (e instanceof Anthropic.RateLimitError) return json({ error: "The AI is busy right now. Try again in a minute." }, 429);

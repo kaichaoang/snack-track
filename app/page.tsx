@@ -125,6 +125,7 @@ export default function Home() {
         <AddFood
           date={date}
           entries={entries}
+          weightKg={profile.weightKg}
           onCancel={() => setTab("today")}
           onSave={(added) => {
             addEntries(added);

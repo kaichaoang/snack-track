@@ -138,7 +138,7 @@ function NutrientStats({ t, entries, today }: { t: Targets; entries: FoodEntry[]
   const line = metric.line(t);
   const days = Array.from({ length: 14 }, (_, i) => {
     const date = shiftDate(today, i - 13);
-    const items = entries.filter((e) => e.date === date);
+    const items = entries.filter((e) => e.date === date && e.kind !== "exercise");
     return { date, logged: items.length > 0, n: sumNutrients(items.map((e) => e.nutrients)) };
   });
   // Today is incomplete, so it's left out of the averages.
@@ -202,7 +202,9 @@ export function ProgressView({
   const days = Array.from({ length: 14 }, (_, i) => {
     const date = shiftDate(today, i - 13);
     const items = entries.filter((e) => e.date === date);
-    return { date, kcal: sumNutrients(items.map((e) => e.nutrients)).calories, logged: items.length > 0 };
+    // Net calories: food eaten minus exercise burned.
+    const kcal = items.reduce((t, e) => t + (e.kind === "exercise" ? -1 : 1) * e.nutrients.calories, 0);
+    return { date, kcal: Math.max(0, kcal), logged: items.some((e) => e.kind !== "exercise") };
   });
   // Today is incomplete, so it's excluded from averages.
   const logged = days.filter((d) => d.logged && d.date !== today);
@@ -268,7 +270,7 @@ export function ProgressView({
         <h2>Calories · last 14 days</h2>
         <CalorieBars days={days} target={t.calories} tdee={t.tdee} />
         <div className="grid2 small">
-          <div><div className="muted">Avg intake (logged days)</div><b className="num">{avgIntake !== null ? `${Math.round(avgIntake)} kcal` : "—"}</b></div>
+          <div><div className="muted">Avg net intake (logged days)</div><b className="num">{avgIntake !== null ? `${Math.round(avgIntake)} kcal` : "—"}</b></div>
           <div><div className="muted">Avg daily deficit</div><b className="num" style={{ color: (avgDeficit ?? 0) >= 0 ? "var(--accent)" : "var(--danger)" }}>{avgDeficit !== null ? `${Math.round(avgDeficit)} kcal` : "—"}</b></div>
           <div><div className="muted">Est. fat lost (from logs)</div><b className="num">{logged.length ? `${estLossKg.toFixed(2)} kg` : "—"}</b></div>
           <div><div className="muted">Projected goal date</div><b>{projectedDate ?? "—"}</b></div>
