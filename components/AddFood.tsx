@@ -65,16 +65,18 @@ export function AddFood({
   date,
   entries,
   weightKg,
+  initialMode = "food",
   onSave,
   onCancel,
 }: {
   date: string;
   entries: FoodEntry[];
   weightKg: number;
+  initialMode?: "food" | "exercise";
   onSave: (e: FoodEntry[]) => void;
   onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<"food" | "exercise">("food");
+  const [mode, setMode] = useState<"food" | "exercise">(initialMode);
   const [text, setText] = useState("");
   const [exText, setExText] = useState("");
   const [meal, setMeal] = useState<MealSlot>(defaultMealSlot());

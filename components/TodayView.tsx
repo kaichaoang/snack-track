@@ -112,7 +112,7 @@ export function TodayView({
   t: Targets;
   onDelete: (id: string) => void;
   onUpdate: (e: FoodEntry) => void;
-  onAdd: () => void;
+  onAdd: (mode?: "food" | "exercise") => void;
 }) {
   // Entry being edited in place in the list (like SplitDumb's expense list).
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -176,7 +176,7 @@ export function TodayView({
       <section className="card">
         <div className="row between">
           <h2 style={{ margin: 0 }}>Food log</h2>
-          <button className="primary" onClick={onAdd}>+ Add food</button>
+          <button className="primary" onClick={() => onAdd("food")}>+ Add food</button>
         </div>
         {day.length === 0 && <p className="muted small">Nothing logged yet. Add your next meal.</p>}
         {MEAL_SLOTS.map((slot) => {
@@ -240,9 +240,10 @@ export function TodayView({
       <section className="card">
         <div className="row between">
           <h2 style={{ margin: 0 }}>Exercise</h2>
-          {burned > 0 && <span className="num muted">−{Math.round(burned)} kcal</span>}
+          <button className="primary" onClick={() => onAdd("exercise")}>+ Add exercise</button>
         </div>
-        {workouts.length === 0 && <p className="muted small" style={{ marginBottom: 0 }}>No exercise logged. Add it from the + tab.</p>}
+        {workouts.length === 0 && <p className="muted small" style={{ marginBottom: 0 }}>No exercise logged.</p>}
+        {burned > 0 && <div className="small muted num" style={{ marginTop: 4 }}>−{Math.round(burned)} kcal burned</div>}
         {workouts.map((e) =>
           e.id === editingId ? (
             <ExerciseEdit

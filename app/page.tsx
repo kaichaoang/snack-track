@@ -39,6 +39,7 @@ export default function Home() {
   const syncStatus = useSyncStatus();
   const [tab, setTab] = useState<Tab>("today");
   const [date, setDate] = useState(localDateKey());
+  const [addMode, setAddMode] = useState<"food" | "exercise">("food");
   const [mounted, setMounted] = useState(false);
   // Last deletion, offered for Undo for a few seconds.
   const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
@@ -117,12 +118,17 @@ export default function Home() {
           t={t}
           onDelete={removeEntry}
           onUpdate={updateEntry}
-          onAdd={() => setTab("add")}
+          onAdd={(mode = "food") => {
+            setAddMode(mode);
+            setTab("add");
+          }}
         />
       )}
 
       {tab === "add" && (
         <AddFood
+          key={addMode}
+          initialMode={addMode}
           date={date}
           entries={entries}
           weightKg={profile.weightKg}
@@ -225,7 +231,10 @@ export default function Home() {
               key={k}
               aria-label={LABELS[k]}
               aria-current={tab === k ? "page" : undefined}
-              onClick={() => setTab(k)}
+              onClick={() => {
+                if (k === "add") setAddMode("food");
+                setTab(k);
+              }}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === k ? 2.4 : 1.7} strokeLinecap="round" strokeLinejoin="round">
                 {ICONS[k](tab === k)}
