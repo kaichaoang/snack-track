@@ -9,6 +9,8 @@ import { FeedbackView } from "./FeedbackView";
 import { useAiEnabled, useSession } from "@/lib/sync";
 import { resizeImage } from "@/lib/image";
 import { describeMeal } from "@/lib/describe";
+import { searchHistory } from "@/lib/history";
+import { fullDate } from "./TodayView";
 
 interface Draft {
   key: string;
@@ -209,7 +211,7 @@ export function AddFood({
               >
                 ✏️ Log manually
               </button>
-              <RecentPanel entries={entries.filter((e) => e.kind !== "exercise")} onPick={relog} />
+              <PastPanel entries={entries} kind="food" onPick={relog} />
             </>
           ) : (
             <>
@@ -223,6 +225,13 @@ export function AddFood({
               >
                 ✏️ Log manually
               </button>
+              <PastPanel
+                entries={entries}
+                kind="exercise"
+                onPick={(e) =>
+                  setExReview({ origin: e.origin, notes: "", items: [{ name: e.name, duration: e.portion, calories: Math.round(e.nutrients.calories) }] })
+                }
+              />
             </>
           )}
         </>
@@ -249,33 +258,44 @@ export function AddFood({
 }
 
 /** Distinct foods logged before, most recent first, for one-tap re-logging. */
-function RecentPanel({ entries, onPick }: { entries: FoodEntry[]; onPick: (e: FoodEntry) => void }) {
-  const seen = new Set<string>();
-  const recent: FoodEntry[] = [];
-  for (const e of [...entries].sort((a, b) => b.createdAt - a.createdAt)) {
-    const k = `${e.name}|${e.portion}`.toLowerCase();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    recent.push(e);
-    if (recent.length === 6) break;
-  }
-  if (recent.length === 0) return null;
+/** Everything logged before, searchable; tap one to log it again. */
+function PastPanel({ entries, kind, onPick }: { entries: FoodEntry[]; kind: "food" | "exercise"; onPick: (e: FoodEntry) => void }) {
+  const [query, setQuery] = useState("");
+  const [shown, setShown] = useState(8);
+  const all = searchHistory(entries, query, kind);
+  if (all.length === 0 && !query) return null;
+  const items = all.slice(0, shown);
   return (
-    <section className="card">
-      <h2>Recent</h2>
-      {recent.map((e) => (
-        <button key={e.id} className="block" style={{ textAlign: "left", marginTop: 6 }} onClick={() => onPick(e)}>
-          <div className="row between">
-            <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {e.name}
-            </span>
-            <b className="num">{Math.round(e.nutrients.calories)}</b>
-          </div>
-          <div className="small muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {e.portion}
-          </div>
-        </button>
-      ))}
+    <section className="card stack">
+      <h2 style={{ margin: 0 }}>{kind === "food" ? "Log again" : "Do again"}</h2>
+      <input
+        type="search"
+        value={query}
+        placeholder={kind === "food" ? "Search what you've logged before" : "Search past exercise"}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setShown(8);
+        }}
+      />
+      {query && all.length === 0 && <p className="small muted" style={{ margin: 0 }}>Nothing logged before matches that.</p>}
+      <div>
+        {items.map(({ entry: e, count }) => (
+          <button key={e.id} className="block" style={{ textAlign: "left", marginTop: 6 }} onClick={() => onPick(e)}>
+            <div className="row between">
+              <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {e.name}
+              </span>
+              <b className="num">{kind === "exercise" ? "−" : ""}{Math.round(e.nutrients.calories)}</b>
+            </div>
+            <div className="small muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {[e.portion, `last ${fullDate(e.date)}`, count > 1 ? `${count}×` : ""].filter(Boolean).join(" · ")}
+            </div>
+          </button>
+        ))}
+      </div>
+      {all.length > shown && (
+        <button className="ghost" onClick={() => setShown(shown + 20)}>Show more ({all.length - shown})</button>
+      )}
     </section>
   );
 }

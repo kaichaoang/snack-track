@@ -40,6 +40,8 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("today");
   const [date, setDate] = useState(localDateKey());
   const [addMode, setAddMode] = useState<"food" | "exercise">("food");
+  // Bumped on every tap of + so it always opens a fresh Add screen.
+  const [addKey, setAddKey] = useState(0);
   const [mounted, setMounted] = useState(false);
   // Last deletion, offered for Undo for a few seconds.
   const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
@@ -127,7 +129,7 @@ export default function Home() {
 
       {tab === "add" && (
         <AddFood
-          key={addMode}
+          key={`${addMode}-${addKey}`}
           initialMode={addMode}
           date={date}
           entries={entries}
@@ -232,7 +234,10 @@ export default function Home() {
               aria-label={LABELS[k]}
               aria-current={tab === k ? "page" : undefined}
               onClick={() => {
-                if (k === "add") setAddMode("food");
+                if (k === "add") {
+                  setAddMode("food");
+                  setAddKey((n) => n + 1);
+                }
                 setTab(k);
               }}
             >

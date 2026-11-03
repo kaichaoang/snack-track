@@ -112,6 +112,7 @@ input, select, textarea {
 }
 input, select { height: 44px; }
 input[type="checkbox"] { height: auto; }
+input[type="search"] { -webkit-appearance: none; appearance: none; }
 input[type="date"] {
   -webkit-appearance: none;
   appearance: none;
